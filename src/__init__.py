@@ -1,35 +1,27 @@
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful, but
-# WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTIBILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 bl_info = {
-    "name": "ADDON_NAME",
-    "author": "AUTHOR_NAME",
-    "description": "",
-    "blender": (2, 80, 0),
-    "version": (0, 0, 1),
-    "location": "",
-    "warning": "",
-    "category": "Generic",
+    "name": "3DGS Painter",
+    "author": "Jiin Park",
+    "description": "Non-photorealistic 3D Gaussian Splatting painting tools",
+    "blender": (4, 2, 0),
+    "version": (1, 0, 0),
+    "location": "View3D > Sidebar > 3DGS Paint",
+    "category": "Paint",
 }
 
-from . import auto_load
+import bpy
+from typing import List, Type
 
-auto_load.init()
+# Will hold all Blender classes to register
+_classes: List[Type] = []
 
 
 def register():
-    auto_load.register()
+    """Register all Blender classes"""
+    for cls in _classes:
+        bpy.utils.register_class(cls)
 
 
 def unregister():
-    auto_load.unregister()
+    """Unregister all Blender classes"""
+    for cls in reversed(_classes):
+        bpy.utils.unregister_class(cls)
