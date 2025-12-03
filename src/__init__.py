@@ -86,6 +86,9 @@ if not _is_actor_process:
     
     from . import preferences
     from . import operators
+    from .viewport import viewport_renderer
+    from .viewport import panels as viewport_panels
+    from .viewport import benchmark as viewport_benchmark
 
     # Will hold all Blender classes to register
     _classes: List[Type] = []
@@ -128,6 +131,9 @@ if not _is_actor_process:
         # Register submodules
         preferences.register()
         operators.register()
+        viewport_renderer.register_viewport_operators()
+        viewport_panels.register_panels()
+        viewport_benchmark.register_benchmark()
         
         # Register local classes
         for cls in _classes:
@@ -152,6 +158,11 @@ if not _is_actor_process:
             kill_generator()
         except:
             pass
+        
+        # Unregister viewport module (cleanup renderer)
+        viewport_benchmark.unregister_benchmark()
+        viewport_panels.unregister_panels()
+        viewport_renderer.unregister_viewport_operators()
         
         # Unregister local classes
         for cls in reversed(_classes):

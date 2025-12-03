@@ -81,7 +81,70 @@ Use a symbolic link to edit the addon without reinstalling:
 
 ## Usage
 
-_Coming soon - painting tools will be available in View3D > Sidebar > 3DGS Paint_
+### Viewport Rendering (Phase 3)
+
+1. **Enable the addon** in Blender Preferences
+2. **Open 3D Viewport** → Sidebar (`N` key) → **"3DGS Paint"** tab
+3. **Viewport Rendering section**:
+    - Click **"Enable"** to start Gaussian splatting rendering
+    - Click **"Disable"** to stop rendering
+4. **Testing section**:
+    - Click **"Generate Test"** to create 1000 test gaussians
+    - Adjust count in the popup dialog (1 - 500,000)
+    - Click **"Clear"** to remove all gaussians
+
+### Painting Tools
+
+_Coming soon in Phase 4_
+
+## Testing
+
+### Test 1: Subprocess & CUDA (Phase 2)
+
+Verify PyTorch and CUDA are working correctly in the subprocess:
+
+**Method A: Blender UI**
+
+1. Go to `Edit` → `Preferences` → `Add-ons`
+2. Search **"3DGS Painter"** → expand preferences panel
+3. Click **"Test Subprocess PyTorch"** → check Info bar for PyTorch version
+4. Click **"Test Subprocess CUDA"** → check Info bar for GPU computation result
+
+**Method B: Python Console**
+
+```python
+import bpy
+
+# Test PyTorch info
+bpy.ops.threegds.test_subprocess()
+# Expected: Info: PyTorch 2.6.0+cu124, CUDA: True, Device: NVIDIA GeForce RTX ...
+
+# Test CUDA computation
+bpy.ops.threegds.test_subprocess_cuda()
+# Expected: Info: CUDA Test: cuda, 1000x1000, compute: 5.23ms, transfer: 0.45ms
+
+# Kill subprocess when done
+bpy.ops.threegds.kill_subprocess()
+```
+
+### Test 2: Viewport Rendering (Phase 3)
+
+Verify GLSL Gaussian splatting rendering:
+
+1. Open **3D Viewport** → Sidebar (`N`) → **"3DGS Paint"** tab
+2. Click **"Enable"** in Viewport Rendering section
+3. Click **"Generate Test"** → set count to 1000 → OK
+4. **Expected**: Colored elliptical gaussian splats visible in viewport
+5. Rotate viewport to verify 3D positioning
+6. Click **"Run Benchmark"** to measure FPS (target: 60 FPS @ 10k gaussians)
+
+### Test 3: Benchmark
+
+```python
+# In Blender Python Console
+bpy.ops.npr.run_benchmark(max_gaussians=10000)
+# Check console for FPS results at different gaussian counts
+```
 
 ## Project Structure
 
