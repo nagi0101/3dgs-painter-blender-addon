@@ -949,12 +949,26 @@ class HybridIPCManager:
 
 ---
 
+> **📄 브러시 스트로크 파이프라인**은 별도 문서로 분리되었습니다:  
+> **`docs/phase4.1_stroke_pipeline.md`** 참조
+>
+> Phase 4.1에서 다루는 내용:
+>
+> -   StrokePainter 라이프사이클 (start/update/finish)
+> -   Arc-length 기반 균일 스탬프 배치
+> -   2계층 브러시 아키텍처 (Pattern/Instance)
+> -   3단계 배치 전략 (place_at, place_at_batch, place_at_batch_arrays)
+> -   StrokeSpline 구성 및 프레임 계산
+> -   GPU 배치 변형 최적화
+
+---
+
 ## 🧪 테스트 및 검증
 
-### 통합 테스트
+### Hybrid 페인팅 통합 테스트
 
 ```python
-# Test script
+# tests/test_hybrid_painting.py
 
 def test_hybrid_painting():
     """Test full painting pipeline with Hybrid architecture."""
@@ -999,6 +1013,7 @@ def test_hybrid_painting():
     viewport_renderer.update_gaussians(deformed_scene)
 
     print("✓ Hybrid painting test passed")
+
 
 test_hybrid_painting()
 ```
@@ -1045,8 +1060,91 @@ def test_shared_memory_ipc():
     assert shm_time < 5, f"SharedMemory too slow: {shm_time:.2f}ms > 5ms target"
     print("✓ SharedMemory IPC benchmark passed")
 
+
 test_shared_memory_ipc()
 ```
+
+### 성능 목표
+
+-   ✓ Stroke latency < 50ms (mouse → viewport)
+-   ✓ Deformation time < 1초 (100 stamps)
+-   ✓ Viewport FPS > 20 during painting
+-   ✓ Memory overhead < 100MB (sync buffers)
+-   ✓ **SharedMemory IPC < 1ms** (10k gaussians)
+-   ✓ **SharedMemory IPC < 5ms** (100k gaussians)
+
+---
+
+## 📚 참고 자료
+
+-   npr_core deformation_gpu.py implementation
+-   Blender Modal Operator docs
+-   PyTorch tensor operations guide
+-   [Python multiprocessing.shared_memory](https://docs.python.org/3/library/multiprocessing.shared_memory.html)
+-   Dream Textures realtime_viewport.py (SharedMemory reference implementation)
+    viewport_renderer.update_gaussians(scene_data)
+
+    # 5. Apply deformation (gsplat)
+
+    from npr_core.deformation_gpu import DeformationGPU
+    deformer = DeformationGPU()
+
+    deformed_scene = deformer.apply_to_scene(scene_data, stamps)
+
+    # 6. Sync back to viewport
+
+    viewport_renderer.update_gaussians(deformed_scene)
+
+    print("✓ Hybrid painting test passed")
+
+test_hybrid_painting()
+
+````
+
+### SharedMemory IPC 벤치마크
+
+```python
+def test_shared_memory_ipc():
+    """Benchmark SharedMemory vs Queue IPC performance."""
+    import time
+    import numpy as np
+    from generator_process.shared_buffer import GaussianSharedBuffer
+    from multiprocessing import Queue
+    import pickle
+
+    # Test data: 10k gaussians (59 floats each)
+    n_gaussians = 10000
+    data = np.random.randn(n_gaussians, 59).astype(np.float32)
+    data_size_mb = data.nbytes / (1024 * 1024)
+
+    print(f"Test data: {n_gaussians} gaussians, {data_size_mb:.2f} MB")
+
+    # Benchmark Queue (pickle)
+    queue = Queue()
+    start = time.perf_counter()
+    for _ in range(10):
+        queue.put(data)
+        _ = queue.get()
+    queue_time = (time.perf_counter() - start) / 10 * 1000
+
+    # Benchmark SharedMemory
+    with GaussianSharedBuffer(n_gaussians) as shm:
+        start = time.perf_counter()
+        for _ in range(10):
+            shm.write(data)
+            _ = shm.read_copy()
+        shm_time = (time.perf_counter() - start) / 10 * 1000
+
+    print(f"Queue (pickle): {queue_time:.2f} ms")
+    print(f"SharedMemory:   {shm_time:.2f} ms")
+    print(f"Speedup:        {queue_time / shm_time:.1f}x")
+
+    # Verify performance target
+    assert shm_time < 5, f"SharedMemory too slow: {shm_time:.2f}ms > 5ms target"
+    print("✓ SharedMemory IPC benchmark passed")
+
+test_shared_memory_ipc()
+````
 
 ### 성능 목표
 

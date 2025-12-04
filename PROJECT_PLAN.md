@@ -25,9 +25,11 @@
 2. **`docs/phase1_core_refactoring.md`** - Core 라이브러리 리팩토링
 3. **`docs/phase2_dependency_management.md`** - 의존성 설치 시스템
 4. **`docs/phase3_viewport_rendering.md`** - GLSL Viewport 렌더링
-5. **`docs/phase4_painting_interaction.md`** - 페인팅 인터랙션
-6. **`docs/phase5_advanced_features.md`** - 고급 기능 (gsplat 활용)
-7. **`docs/technical_considerations.md`** - 기술적 고려사항 상세
+5. **`docs/phase4_painting_interaction.md`** - 페인팅 인터랙션 (기반 인프라)
+6. **`docs/phase4.1_stroke_pipeline.md`** - 브러시 스트로크 파이프라인
+7. **`docs/phase4.5_brush_creation.md`** - 브러시 생성 및 변환
+8. **`docs/phase5_advanced_features.md`** - 고급 기능 (gsplat 활용)
+9. **`docs/technical_considerations.md`** - 기술적 고려사항 상세
 
 **사용 방법**: 각 Phase 시작 시 "이 문서 + 해당 Phase 문서"를 에이전트에게 제공
 
@@ -459,9 +461,9 @@ project_root/
 
 ---
 
-### Phase 4: 인터랙션 구현 (Painting Interaction) - 3주
+### Phase 4: 인터랙션 구현 (Painting Interaction) - 2주
 
-**목표**: Real-time painting + Hybrid 데이터 동기화
+**목표**: Real-time painting 기반 인프라 + Hybrid 데이터 동기화
 
 **📄 상세 문서**: `docs/phase4_painting_interaction.md`
 
@@ -471,8 +473,49 @@ project_root/
 -   Modal Operator (painting mode)
 -   Incremental deformation (gsplat computation)
 -   Hybrid 데이터 흐름 (NumPy ↔ PyTorch ↔ GLSL)
+-   SharedMemory IPC (zero-copy 대용량 데이터 전송)
 -   Brush system + Undo/Redo
--   성능 목표: 연속 스트로크 20+ FPS
+-   성능 목표: SharedMemory IPC <1ms (10k gaussians)
+
+---
+
+### Phase 4.1: 브러시 스트로크 파이프라인 (Stroke Pipeline) - 1주
+
+**목표**: 사용자 입력을 Gaussian 데이터로 변환하는 스트로크 생성 파이프라인
+
+**📄 상세 문서**: `docs/phase4.1_stroke_pipeline.md`
+
+> **⚡ 기존 코드 활용**: `StrokePainter`, `BrushStamp`, `StrokeSpline`, `deformation_gpu` 모듈이 이미 구현됨. **블렌더 3D 통합에 집중.**
+
+**핵심 작업**:
+
+-   기존 `StrokePainter` 활용 (start/update/finish 라이프사이클)
+-   기존 `StrokeSpline` 활용 (Arc-length 파라미터화, Slerp)
+-   기존 `BrushStamp` 활용 (3단계 배치 전략)
+-   기존 `deformation_gpu` 활용 (GPU 배치 변형, 희소 최적화)
+-   **신규**: 블렌더 3D 좌표계 적응, Viewport 동기화
+-   성능 목표: 스탬프 배치 <1ms (batch_arrays), 변형 <500ms (100 stamps)
+
+---
+
+### Phase 4.5: 브러시 생성 (Brush Creation) - 1주
+
+**목표**: 프로그래매틱 브러시 생성 + Image-to-Brush 변환 파이프라인
+
+**📄 상세 문서**: `docs/phase4.5_brush_creation.md`
+
+> **⚡ 기존 코드 활용**: `BrushStamp.create_*`, `BrushManager`, `BrushSerializer` 이미 구현됨. **Image-to-Brush 변환(BrushConverter)만 신규 구현.**
+
+**핵심 작업**:
+
+-   기존 프로그래매틱 브러시 활용 (Circular, Line, Grid - 이미 구현됨)
+-   기존 `BrushManager` 활용 (라이브러리 관리, JSON 직렬화 - 이미 구현됨)
+-   **신규: Image-to-Brush 변환 (BrushConverter)**:
+    -   Skeleton + Thickness 기반 깊이 추정
+    -   Importance-based point sampling
+    -   Depth profiles: flat, convex, concave, ridge
+-   **신규: 블렌더 UI 패널 통합**
+-   성능 목표: Image-to-Brush <300ms
 
 ---
 
