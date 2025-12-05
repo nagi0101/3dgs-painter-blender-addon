@@ -400,6 +400,206 @@ class NPRGenerator(Actor):
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def test_gsplat(self) -> dict:
+        """
+        Test if gsplat is available and working in subprocess.
+        
+        Returns:
+            dict with gsplat availability, version, and test result
+        """
+        result = {
+            "gsplat_available": False,
+            "gsplat_version": None,
+            "gsplat_error": None,
+            "rasterization_test": False,
+            "deps_path_exists": False,
+        }
+        
+        import sys
+        import os
+        from pathlib import Path
+        
+        # Check sys.path (first 10 entries)
+        result["sys_path"] = sys.path[:10]
+        
+        # Check deps path
+        deps_path = Path(__file__).parent.parent / ".python_dependencies"
+        result["deps_path_exists"] = deps_path.exists()
+        result["deps_path"] = str(deps_path)
+        
+        if deps_path.exists():
+            # List gsplat-related files
+            gsplat_files = []
+            for item in deps_path.iterdir():
+                if 'gsplat' in item.name.lower():
+                    gsplat_files.append(item.name)
+            result["gsplat_files"] = gsplat_files
+        
+        # Try to import gsplat
+        try:
+            import gsplat
+            result["gsplat_available"] = True
+            result["gsplat_version"] = getattr(gsplat, "__version__", "unknown")
+            
+            # Try to import rasterization
+            try:
+                from gsplat import rasterization
+                result["rasterization_test"] = True
+            except ImportError as e:
+                result["rasterization_error"] = str(e)
+                
+        except ImportError as e:
+            result["gsplat_error"] = str(e)
+        except Exception as e:
+            result["gsplat_error"] = f"Load error: {str(e)}"
+        
+        return result
+    
+    # ==========================================================================
+    # Brush Optimization Actions (Phase 4.5)
+    # ==========================================================================
+    
+    def optimize_brush_gaussians(
+        self,
+        gaussians_data: list,
+        target_image: list,
+        target_alpha: list = None,
+        iterations: int = 50,
+        render_size: int = 256
+    ) -> dict:
+        """
+        Optimize gaussian parameters using gsplat differentiable rendering.
+        
+        This runs in subprocess with PyTorch/CUDA access.
+        
+        Args:
+            gaussians_data: List of dicts with gaussian parameters:
+                           [{'position': [x,y,z], 'rotation': [x,y,z,w], 
+                             'scale': [x,y,z], 'opacity': float, 'color': [r,g,b]}, ...]
+            target_image: Target RGB image as nested list (H, W, 3) in [0, 1]
+            target_alpha: Optional alpha mask as nested list (H, W) in [0, 1]
+            iterations: Number of optimization iterations
+            render_size: Size for rendering during optimization
+        
+        Returns:
+            dict with 'success', 'gaussians' (optimized), 'final_loss'
+        """
+        try:
+            import numpy as np
+            import time
+            import sys
+            
+            start_time = time.perf_counter()
+            
+            # Debug: Print sys.path
+            print(f"[optimize_brush_gaussians] sys.path[0]: {sys.path[0] if sys.path else 'empty'}")
+            
+            # Check if gsplat is available first - with detailed logging
+            try:
+                from .optimizer_torch import is_gsplat_available, _ensure_gsplat
+                print(f"[optimize_brush_gaussians] optimizer_torch imported successfully")
+                
+                # Try direct gsplat import first for debugging
+                try:
+                    import gsplat
+                    print(f"[optimize_brush_gaussians] Direct gsplat import OK: {gsplat.__version__}")
+                except ImportError as e:
+                    print(f"[optimize_brush_gaussians] Direct gsplat import FAILED: {e}")
+                
+                # Now check via is_gsplat_available
+                gsplat_ok = is_gsplat_available()
+                print(f"[optimize_brush_gaussians] is_gsplat_available() = {gsplat_ok}")
+                
+                if not gsplat_ok:
+                    return {
+                        "success": False,
+                        "error": "gsplat is not available in subprocess (is_gsplat_available returned False)",
+                        "fallback": True
+                    }
+            except Exception as e:
+                import traceback
+                print(f"[optimize_brush_gaussians] Error checking gsplat: {e}")
+                print(traceback.format_exc())
+                return {
+                    "success": False,
+                    "error": f"Error checking gsplat availability: {e}",
+                    "traceback": traceback.format_exc(),
+                    "fallback": True
+                }
+            
+            # Convert input lists to numpy arrays
+            n_gaussians = len(gaussians_data)
+            
+            # Create structured array for gaussians
+            dtype = np.dtype([
+                ('position', np.float32, (3,)),
+                ('rotation', np.float32, (4,)),
+                ('scale', np.float32, (3,)),
+                ('opacity', np.float32),
+                ('color', np.float32, (3,))
+            ])
+            
+            gaussians_np = np.zeros(n_gaussians, dtype=dtype)
+            for i, g in enumerate(gaussians_data):
+                gaussians_np[i]['position'] = g['position']
+                gaussians_np[i]['rotation'] = g['rotation']
+                gaussians_np[i]['scale'] = g['scale']
+                gaussians_np[i]['opacity'] = g['opacity']
+                gaussians_np[i]['color'] = g['color']
+            
+            # Convert target image
+            target_np = np.array(target_image, dtype=np.float32)
+            alpha_np = np.array(target_alpha, dtype=np.float32) if target_alpha else None
+            
+            # Import and run optimizer
+            from .optimizer_torch import TorchGaussianOptimizer
+            
+            optimizer = TorchGaussianOptimizer(
+                gaussians_data=gaussians_np,
+                target_image=target_np,
+                target_alpha=alpha_np,
+                render_width=render_size,
+                render_height=render_size
+            )
+            
+            optimized_np = optimizer.optimize(iterations=iterations)
+            
+            # Convert back to list of dicts
+            optimized_list = []
+            for i in range(len(optimized_np)):
+                optimized_list.append({
+                    'position': optimized_np[i]['position'].tolist(),
+                    'rotation': optimized_np[i]['rotation'].tolist(),
+                    'scale': optimized_np[i]['scale'].tolist(),
+                    'opacity': float(optimized_np[i]['opacity']),
+                    'color': optimized_np[i]['color'].tolist()
+                })
+            
+            elapsed = time.perf_counter() - start_time
+            
+            return {
+                "success": True,
+                "gaussians": optimized_list,
+                "count": len(optimized_list),
+                "elapsed_ms": float(elapsed * 1000)
+            }
+            
+        except ImportError as e:
+            import traceback
+            return {
+                "success": False,
+                "error": f"gsplat not available: {str(e)}",
+                "traceback": traceback.format_exc(),
+                "fallback": True
+            }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
 
 
 # =============================================================================

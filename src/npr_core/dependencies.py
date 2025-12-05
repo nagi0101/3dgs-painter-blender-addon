@@ -21,15 +21,18 @@ class DependencyInfo:
 
 # Required packages for 3DGS Painter
 # Note: torch/torchvision are installed separately with platform-specific handling
-# PyTorch version: 2.6.0 with CUDA 12.4 (cu124) on Windows/Linux with NVIDIA GPU
+# PyTorch version: 2.4.0 with CUDA 12.4 (cu124) on Windows/Linux with NVIDIA GPU
+# Using 2.4.0 for gsplat precompiled wheel compatibility
 REQUIRED_PACKAGES: List[DependencyInfo] = [
-    DependencyInfo("torch", "==2.6.0", import_name="torch"),  # +cu124 suffix added by installer
-    DependencyInfo("torchvision", "==0.21.0", import_name="torchvision"),  # +cu124 suffix added by installer
+    DependencyInfo("torch", "==2.4.0", import_name="torch"),  # +cu124 suffix added by installer
+    DependencyInfo("torchvision", "==0.19.0", import_name="torchvision"),  # +cu124 suffix added by installer
     DependencyInfo("numpy", ">=1.24.0", import_name="numpy"),
     DependencyInfo("pillow", ">=10.0.0", import_name="PIL"),
     DependencyInfo("scipy", ">=1.11.0", import_name="scipy"),
     DependencyInfo("pyyaml", ">=6.0", import_name="yaml"),
-    DependencyInfo("gsplat", ">=0.1.0", import_name="gsplat", optional=True),
+    DependencyInfo("opencv-python", ">=4.8.0", import_name="cv2"),
+    DependencyInfo("scikit-image", ">=0.21.0", import_name="skimage"),
+    DependencyInfo("gsplat", ">=0.1.0", import_name="gsplat", optional=False),  # REQUIRED for CUDA systems
 ]
 
 

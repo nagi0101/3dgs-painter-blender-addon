@@ -22,6 +22,21 @@ A Blender addon for non-photorealistic 3D Gaussian Splatting painting, based on 
     -   6GB+ VRAM recommended
 -   **Internet connection** (for dependency installation)
 
+### Windows-Specific Build Requirements
+
+For CUDA-accelerated features, some dependencies like `gsplat` must be compiled from source. This requires a proper development environment on Windows:
+
+-   **Visual Studio 2022 Build Tools**:
+    -   Install from the [Visual Studio Website](https://visualstudio.microsoft.com/downloads/).
+    -   During installation, select the **"Desktop development with C++"** workload.
+
+-   **Python 3.11 (System-wide Installation)**:
+    -   The installer requires a full, system-wide installation of Python 3.11 (in addition to the one bundled with Blender).
+    -   Download from [python.org](https://www.python.org/downloads/windows/).
+    -   During installation, ensure the following options are checked:
+        -   **"Add python.exe to PATH"**
+        -   On the "Advanced Options" screen, **"Install development libraries"**.
+
 ## Installation
 
 ### Method 1: ZIP Installation (Recommended for Users)
@@ -207,6 +222,11 @@ In Blender, press `F3` and search for "Reload Scripts", or restart Blender.
 
 -   Run Blender as Administrator for initial installation
 -   Or use a portable Blender installation
+
+### `gsplat` installation fails on Windows (e.g., "fatal error C1083: Cannot open include file: 'Python.h'")
+
+-   **Cause**: This error occurs because `gsplat` needs to be compiled, but Blender's internal Python does not include the required development files.
+-   **Solution**: You must set up a proper build environment as described in the **Windows-Specific Build Requirements** section above. Ensure both Visual Studio Build Tools and a system-wide Python 3.11 (with development libraries and added to PATH) are correctly installed.
 
 ## References
 

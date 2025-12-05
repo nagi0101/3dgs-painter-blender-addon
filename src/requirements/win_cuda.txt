@@ -7,3 +7,26 @@ numpy>=1.24.0,<2.0
 pillow>=10.0.0
 scipy>=1.11.0
 PyYAML>=6.0
+
+# ============================================================
+# PyTorch 2.6+ dependencies (installed with --no-deps, so need these)
+# ============================================================
+sympy>=1.12          # torch._dynamo (JIT compiler)
+mpmath>=1.1.0        # sympy dependency
+filelock>=3.0        # torch multiprocessing
+jinja2>=3.0          # torch._inductor
+MarkupSafe>=2.0      # jinja2 dependency
+networkx>=2.6        # torch.fx
+typing-extensions>=4.0  # torch type hints
+fsspec>=2021.0       # torch.distributed
+
+# ============================================================
+# gsplat dependencies
+# ============================================================
+rich>=10.0           # gsplat console output
+
+# ============================================================
+# Image processing for BrushConverter (Phase 4.5)
+# ============================================================
+opencv-python>=4.8.0
+scikit-image>=0.21.0

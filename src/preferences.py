@@ -76,14 +76,22 @@ class ThreeDGSPainterPreferences(AddonPreferences):
         missing = get_missing_packages()
         installer = PackageInstaller()
         
+        # Check if only gsplat is missing (common case after interrupted install)
+        missing_names = [dep.name for dep in missing]
+        only_gsplat_missing = missing_names == ['gsplat']
+        
         box = layout.box()
         if missing:
-            box.label(text="Missing Dependencies", icon='ERROR')
-            
-            col = box.column(align=True)
-            for dep in missing:
-                row = col.row()
-                row.label(text=f"  • {dep.name} {dep.version}", icon='X')
+            if only_gsplat_missing:
+                box.label(text="gsplat Installation Required", icon='ERROR')
+                box.label(text="  Other packages are already installed.")
+                box.label(text="  Only gsplat needs to be installed.")
+            else:
+                box.label(text="Missing Dependencies", icon='ERROR')
+                col = box.column(align=True)
+                for dep in missing:
+                    row = col.row()
+                    row.label(text=f"  • {dep.name} {dep.version}", icon='X')
             
             box.separator()
             
@@ -99,7 +107,10 @@ class ThreeDGSPainterPreferences(AddonPreferences):
             if self.is_installing:
                 row.operator("threegds.install_dependencies", text="Installing...", icon='SORTTIME')
             else:
-                row.operator("threegds.install_dependencies", text="Install Dependencies", icon='IMPORT')
+                if only_gsplat_missing:
+                    row.operator("threegds.install_dependencies", text="Install gsplat", icon='IMPORT')
+                else:
+                    row.operator("threegds.install_dependencies", text="Install Dependencies", icon='IMPORT')
         else:
             box.label(text="All Dependencies Installed", icon='CHECKMARK')
             
@@ -121,6 +132,52 @@ class ThreeDGSPainterPreferences(AddonPreferences):
             except Exception:
                 pass
             
+            # gsplat status and compile button
+            box.separator()
+            gsplat_box = box.box()
+            gsplat_box.label(text="gsplat (CUDA Kernels)", icon='OUTLINER_DATA_LIGHTPROBE')
+            
+            try:
+                gsplat_ver = get_package_version("gsplat")
+                if gsplat_ver:
+                    gsplat_box.label(text=f"  Package: v{gsplat_ver}")
+                else:
+                    gsplat_box.label(text="  Package: Installed")
+            except Exception:
+                gsplat_box.label(text="  Package: Not installed", icon='X')
+            
+            # Check if CUDA kernels are compiled
+            try:
+                # Try importing csrc to check compilation status
+                import sys
+                deps_path = installer.dependencies_path
+                if str(deps_path) not in sys.path:
+                    sys.path.insert(0, str(deps_path))
+                
+                # This is a quick check - don't actually import
+                gsplat_box.label(text="  Status: Use 'Test gsplat' to verify")
+            except Exception:
+                pass
+            
+            # Compile gsplat button
+            row = gsplat_box.row()
+            row.scale_y = 1.2
+            row.enabled = not self.is_installing and platform_info.cuda_available
+            if not platform_info.cuda_available:
+                row.label(text="CUDA required for gsplat", icon='ERROR')
+            elif self.is_installing:
+                row.operator("threegds.compile_gsplat", text="Compiling...", icon='SORTTIME')
+            else:
+                row.operator("threegds.compile_gsplat", text="Compile CUDA Kernels", icon='FILE_REFRESH')
+            
+            # MSVC status on Windows
+            if platform_info.system == "Windows":
+                if platform_info.vcvars64_path:
+                    gsplat_box.label(text=f"  Compiler: MSVC (vcvars64.bat) ✓", icon='CHECKMARK')
+                else:
+                    gsplat_box.label(text="  Compiler: Visual Studio Build Tools not found!", icon='ERROR')
+                    gsplat_box.label(text="    Install 'Desktop development with C++' workload")
+            
             # Uninstall button
             box.separator()
             row = box.row()
@@ -132,7 +189,8 @@ class ThreeDGSPainterPreferences(AddonPreferences):
             row = box.row(align=True)
             row.operator("threegds.test_subprocess", text="Test PyTorch", icon='SCRIPT')
             row.operator("threegds.test_subprocess_cuda", text="Test CUDA", icon='OUTLINER_DATA_LIGHTPROBE')
-            row = box.row()
+            row = box.row(align=True)
+            row.operator("threegds.test_gsplat", text="Test gsplat", icon='SHADING_RENDERED')
             row.operator("threegds.kill_subprocess", text="Kill Subprocess", icon='CANCEL')
         
         layout.separator()
@@ -148,12 +206,14 @@ class ThreeDGSPainterPreferences(AddonPreferences):
             box = layout.box()
             box.label(text="Installation Log", icon='TEXT')
             
-            # Display log lines (limit to last 20 lines)
-            log_lines = self.install_log.split('\n')[-20:]
+            # Display log lines (limit to last 30 lines for detailed logs)
+            log_lines = self.install_log.split('\n')[-30:]
             col = box.column(align=True)
             for line in log_lines:
                 if line.strip():
-                    col.label(text=line)
+                    # Truncate long lines
+                    display_line = line[:100] + "..." if len(line) > 100 else line
+                    col.label(text=display_line)
 
 
 # Registration

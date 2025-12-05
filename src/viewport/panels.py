@@ -6,7 +6,58 @@ UI panels for 3DGS Painter viewport.
 """
 
 import bpy
-from bpy.types import Panel
+from bpy.types import Panel, UIList, PropertyGroup
+from bpy.props import StringProperty, IntProperty, CollectionProperty
+
+
+# =============================================================================
+# Property Groups for Brush Library
+# =============================================================================
+
+class NPR_BrushItem(PropertyGroup):
+    """Property group for brush library items"""
+    brush_id: StringProperty(
+        name="Brush ID",
+        description="Unique identifier for the brush"
+    )
+    name: StringProperty(
+        name="Name",
+        description="Display name of the brush"
+    )
+    brush_type: StringProperty(
+        name="Type",
+        description="Type of brush (programmatic, converted, imported)"
+    )
+    gaussian_count: IntProperty(
+        name="Gaussians",
+        description="Number of gaussians in the brush"
+    )
+    source: StringProperty(
+        name="Source",
+        description="Source of the brush (circular, line, grid, image)"
+    )
+
+
+class NPR_UL_BrushList(UIList):
+    """UIList for displaying brushes in the library"""
+    
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
+        # Choose icon based on source
+        icon_map = {
+            'circular': 'MESH_CIRCLE',
+            'line': 'IPO_LINEAR',
+            'grid': 'MESH_GRID',
+            'image': 'IMAGE_DATA',
+        }
+        brush_icon = icon_map.get(item.source, 'BRUSH_DATA')
+        
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row.label(text=item.name, icon=brush_icon)
+            row.label(text=f"{item.gaussian_count}g")
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text="", icon=brush_icon)
 
 
 class NPR_PT_ViewportPanel(Panel):
@@ -140,6 +191,113 @@ class NPR_PT_DependenciesPanel(Panel):
         col.separator()
         col.operator("threegds.test_subprocess", text="Test PyTorch", icon='GHOST_ENABLED')
         col.operator("threegds.test_subprocess_cuda", text="Test CUDA", icon='OUTLINER_DATA_LIGHTPROBE')
+        col.operator("threegds.test_gsplat", text="Test gsplat", icon='SHADING_RENDERED')
+
+
+class NPR_PT_BrushCreationPanel(Panel):
+    """Brush creation panel for 3DGS Painter"""
+    bl_label = "Brush Creation"
+    bl_idname = "NPR_PT_brush_creation_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "3DGS Paint"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        
+        # Programmatic brushes section
+        box = layout.box()
+        box.label(text="Programmatic Brushes", icon='BRUSH_DATA')
+        
+        row = box.row(align=True)
+        row.operator("threegds.create_brush_circular", text="Circular", icon='MESH_CIRCLE')
+        row.operator("threegds.create_brush_line", text="Line", icon='IPO_LINEAR')
+        row.operator("threegds.create_brush_grid", text="Grid", icon='MESH_GRID')
+        
+        # Image to Brush section
+        box = layout.box()
+        box.label(text="Image to Brush", icon='IMAGE_DATA')
+        
+        col = box.column(align=True)
+        col.prop(scene, "npr_conversion_num_gaussians", text="Gaussians")
+        col.prop(scene, "npr_conversion_depth_profile", text="Depth Profile")
+        
+        col.separator()
+        col.prop(scene, "npr_conversion_skeleton_weight", text="Skeleton Weight")
+        col.prop(scene, "npr_conversion_thickness_weight", text="Thickness Weight")
+        
+        col.separator()
+        col.prop(scene, "npr_conversion_enable_elongation", text="Enable Elongation")
+        
+        col.separator()
+        col.operator("threegds.convert_image_to_brush", text="Convert Image...", icon='IMPORT')
+
+
+class NPR_PT_BrushLibraryPanel(Panel):
+    """Brush library panel for 3DGS Painter"""
+    bl_label = "Brush Library"
+    bl_idname = "NPR_PT_brush_library_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "3DGS Paint"
+    bl_options = {'DEFAULT_CLOSED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        
+        # Refresh button at top
+        row = layout.row(align=True)
+        row.operator("threegds.refresh_brush_library", text="Refresh", icon='FILE_REFRESH')
+        
+        # Brush list
+        row = layout.row()
+        row.template_list(
+            "NPR_UL_BrushList", "",
+            scene, "npr_brush_library",
+            scene, "npr_brush_library_index",
+            rows=5
+        )
+        
+        # Action buttons (vertical sidebar)
+        col = row.column(align=True)
+        col.operator("threegds.select_library_brush", text="", icon='CHECKMARK')
+        col.operator("threegds.rename_library_brush", text="", icon='OUTLINER_DATA_GP_LAYER')
+        col.operator("threegds.delete_library_brush", text="", icon='TRASH')
+        
+        # Selected brush info
+        if scene.npr_brush_library and 0 <= scene.npr_brush_library_index < len(scene.npr_brush_library):
+            selected = scene.npr_brush_library[scene.npr_brush_library_index]
+            
+            box = layout.box()
+            box.label(text="Selected Brush", icon='INFO')
+            
+            col = box.column(align=True)
+            col.label(text=f"Name: {selected.name}")
+            col.label(text=f"Type: {selected.brush_type}")
+            col.label(text=f"Gaussians: {selected.gaussian_count}")
+            
+            # Show if this is the active brush for painting
+            if scene.npr_selected_brush_id == selected.brush_id:
+                col.label(text="✓ Active for painting", icon='CHECKMARK')
+        
+        # Currently active brush
+        box = layout.box()
+        box.label(text="Active Brush", icon='BRUSH_DATA')
+        
+        if scene.npr_selected_brush_id:
+            # Find active brush name
+            active_name = "Unknown"
+            for item in scene.npr_brush_library:
+                if item.brush_id == scene.npr_selected_brush_id:
+                    active_name = item.name
+                    break
+            box.label(text=f"Using: {active_name}")
+        else:
+            box.label(text="Using: Pattern-based (default)")
+            box.label(text=f"Pattern: {scene.npr_brush_pattern}")
 
 
 # Scene properties for rendering settings
@@ -223,6 +381,68 @@ def _register_scene_props():
         description="Apply spline-based deformation to strokes",
         default=False
     )
+    
+    # Brush conversion settings (Phase 4.5)
+    bpy.types.Scene.npr_conversion_num_gaussians = bpy.props.IntProperty(
+        name="Target Gaussians",
+        description="Number of Gaussians to generate from image",
+        default=100,
+        min=10,
+        max=1000
+    )
+    
+    bpy.types.Scene.npr_conversion_depth_profile = bpy.props.EnumProperty(
+        name="Depth Profile",
+        description="How depth is estimated from image features",
+        items=[
+            ('FLAT', "Flat", "Minimal depth variation"),
+            ('CONVEX', "Convex", "Center bulges outward (skeleton high)"),
+            ('CONCAVE', "Concave", "Center depressed inward"),
+            ('RIDGE', "Ridge", "Sharp ridge along skeleton"),
+        ],
+        default='CONVEX'
+    )
+    
+    bpy.types.Scene.npr_conversion_skeleton_weight = bpy.props.FloatProperty(
+        name="Skeleton Weight",
+        description="Weight of skeleton proximity in depth estimation",
+        default=0.7,
+        min=0.0,
+        max=1.0
+    )
+    
+    bpy.types.Scene.npr_conversion_thickness_weight = bpy.props.FloatProperty(
+        name="Thickness Weight",
+        description="Weight of thickness in depth estimation",
+        default=0.3,
+        min=0.0,
+        max=1.0
+    )
+    
+    bpy.types.Scene.npr_conversion_enable_elongation = bpy.props.BoolProperty(
+        name="Enable Elongation",
+        description="Elongate Gaussians along stroke direction",
+        default=True
+    )
+    
+    # Brush library properties (Phase 4.5)
+    bpy.types.Scene.npr_brush_library = bpy.props.CollectionProperty(
+        type=NPR_BrushItem,
+        name="Brush Library",
+        description="Collection of saved brushes"
+    )
+    
+    bpy.types.Scene.npr_brush_library_index = bpy.props.IntProperty(
+        name="Active Brush Index",
+        description="Index of selected brush in library list",
+        default=0
+    )
+    
+    bpy.types.Scene.npr_selected_brush_id = bpy.props.StringProperty(
+        name="Selected Brush ID",
+        description="ID of the brush selected for painting (empty = use pattern-based)",
+        default=""
+    )
 
 
 def _unregister_scene_props():
@@ -237,6 +457,16 @@ def _unregister_scene_props():
         'npr_brush_pattern',
         'npr_brush_num_gaussians',
         'npr_enable_deformation',
+        # Phase 4.5 brush conversion properties
+        'npr_conversion_num_gaussians',
+        'npr_conversion_depth_profile',
+        'npr_conversion_skeleton_weight',
+        'npr_conversion_thickness_weight',
+        'npr_conversion_enable_elongation',
+        # Phase 4.5 brush library properties
+        'npr_brush_library',
+        'npr_brush_library_index',
+        'npr_selected_brush_id',
     ]
     
     for prop in props_to_remove:
@@ -264,21 +494,53 @@ def _on_depth_bias_changed(self, context):
 panel_classes = [
     NPR_PT_ViewportPanel,
     NPR_PT_PaintingPanel,
+    NPR_PT_BrushCreationPanel,
+    NPR_PT_BrushLibraryPanel,
     NPR_PT_DependenciesPanel,
+]
+
+# PropertyGroup classes (must be registered before panels)
+property_classes = [
+    NPR_BrushItem,
+]
+
+# UIList classes
+uilist_classes = [
+    NPR_UL_BrushList,
 ]
 
 
 def register_panels():
     """Register UI panels."""
+    # Register property groups first
+    for cls in property_classes:
+        bpy.utils.register_class(cls)
+    
+    # Register UIList classes
+    for cls in uilist_classes:
+        bpy.utils.register_class(cls)
+    
+    # Register scene properties (after PropertyGroups)
     _register_scene_props()
     
+    # Register panels
     for cls in panel_classes:
         bpy.utils.register_class(cls)
 
 
 def unregister_panels():
     """Unregister UI panels."""
+    # Unregister panels first
     for cls in reversed(panel_classes):
         bpy.utils.unregister_class(cls)
     
+    # Unregister scene properties
     _unregister_scene_props()
+    
+    # Unregister UIList classes
+    for cls in reversed(uilist_classes):
+        bpy.utils.unregister_class(cls)
+    
+    # Unregister property groups last
+    for cls in reversed(property_classes):
+        bpy.utils.unregister_class(cls)
