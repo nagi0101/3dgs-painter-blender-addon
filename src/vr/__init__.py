@@ -6,6 +6,7 @@ from .vr_ray_renderer import VRRayRenderer, get_vr_ray_renderer
 from . import vr_operators
 from . import vr_panels
 from . import vr_freehand_paint
+from . import vr_offscreen_renderer
 
 __version__ = "0.1.0"
 
@@ -13,11 +14,16 @@ def register():
     vr_operators.register()
     vr_panels.register()
     vr_freehand_paint.register()
+    vr_offscreen_renderer.register()
     print("[3DGS Painter VR] VR module registered")
 
 def unregister():
     try:
         get_vr_ray_renderer().unregister()
+    except:
+        pass
+    try:
+        vr_offscreen_renderer.unregister()
     except:
         pass
     try:

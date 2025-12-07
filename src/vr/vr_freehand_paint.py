@@ -383,7 +383,33 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
             print(f"[VR Paint] PC viewport sync error: {e}")
         
         # ============================================================
-        # 2. VR Mesh Objects - DISABLED FOR TESTING
+        # 2. VR Offscreen Renderer (Phase 1 - visible in VR headset!)
+        # ============================================================
+        try:
+            from .vr_offscreen_renderer import get_vr_offscreen_renderer
+            
+            offscreen = get_vr_offscreen_renderer()
+            
+            if not offscreen._initialized:
+                offscreen.initialize()
+                offscreen.create_display_plane(context)
+            
+            # Clear and add all gaussians
+            offscreen.clear()
+            offscreen.add_gaussians_batch(self._accumulated_gaussians)
+            
+            # Update display
+            offscreen.update_display(context)
+            
+            print(f"[VR Paint] Offscreen display updated: {len(offscreen.gaussian_positions)} gaussians")
+            
+        except Exception as e:
+            print(f"[VR Paint] VR offscreen sync error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # ============================================================
+        # 3. VR Mesh Objects - DISABLED FOR TESTING
         # ============================================================
         # Mesh rendering disabled to test if GLSL works in VR
         # Uncomment below if GLSL doesn't work and mesh fallback is needed

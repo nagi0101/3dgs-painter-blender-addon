@@ -35,7 +35,7 @@ class NPR_PT_VRPanel(Panel):
         if is_running:
             layout.separator()
             
-            # NEW: VR Freehand Paint (Tilt Brush style)
+            # VR Freehand Paint (Tilt Brush style)
             box = layout.box()
             box.label(text="VR Freehand Paint", icon='BRUSH_DATA')
             row = box.row(align=True)
@@ -47,6 +47,20 @@ class NPR_PT_VRPanel(Panel):
             col.label(text="SPACE: Hold to paint")
             col.label(text="ESC: Exit paint mode")
             col.label(text="Paint at controller tip")
+            
+            layout.separator()
+            
+            # Phase 1: VR Offscreen Display (gpu.offscreen + Plane)
+            box = layout.box()
+            box.label(text="VR Offscreen Display", icon='TEXTURE')
+            row = box.row(align=True)
+            row.operator("threegds.vr_offscreen_test", text="Test Display", icon='IMAGE_DATA')
+            row.operator("threegds.vr_offscreen_cleanup", text="Cleanup", icon='TRASH')
+            
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="Phase 1: Renders to 2D Plane")
+            col.label(text="Visible in VR headset!")
             
             layout.separator()
             
