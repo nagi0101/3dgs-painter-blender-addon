@@ -11,8 +11,8 @@
 
 **파일**: `src/operators.py`
 
--   `raycast_mouse_to_surface(context, event)` - 마우스 좌표 → 3D 표면 위치 변환
--   `get_tablet_pressure(event)` - 태블릿 압력 지원 (1.0 fallback)
+- `raycast_mouse_to_surface(context, event)` - 마우스 좌표 → 3D 표면 위치 변환
+- `get_tablet_pressure(event)` - 태블릿 압력 지원 (1.0 fallback)
 
 ```python
 def raycast_mouse_to_surface(context, event):
@@ -31,11 +31,11 @@ def get_tablet_pressure(event):
 
 Modal operator for real-time Gaussian painting:
 
--   `bl_idname = "threegds.gaussian_paint"`
--   LMB 드래그로 스트로크 생성
--   태블릿 압력에 따른 브러시 크기/투명도 조절
--   `StrokePainter`와 `GaussianViewportRenderer` 통합
--   Scene properties에서 브러시 설정 읽기
+- `bl_idname = "threegds.gaussian_paint"`
+- LMB 드래그로 스트로크 생성
+- 태블릿 압력에 따른 브러시 크기/투명도 조절
+- `StrokePainter`와 `GaussianViewportRenderer` 통합
+- Scene properties에서 브러시 설정 읽기
 
 ```python
 class THREEGDS_OT_GaussianPaint(Operator):
@@ -55,15 +55,15 @@ class THREEGDS_OT_GaussianPaint(Operator):
 
 Zero-copy SharedMemory wrapper for high-performance IPC:
 
--   59 floats per gaussian (matches GaussianDataManager format)
--   Header for metadata (current count)
--   Thread-safe wrapper (`ThreadSafeSharedBuffer`)
--   Benchmark utility (`benchmark_shared_buffer()`)
+- 59 floats per gaussian (matches GaussianDataManager format)
+- Header for metadata (current count)
+- Thread-safe wrapper (`ThreadSafeSharedBuffer`)
+- Benchmark utility (`benchmark_shared_buffer()`)
 
 **성능 목표 달성**:
 
--   Queue (pickle): ~80ms @ 10k gaussians
--   SharedMemory: <1ms @ 10k gaussians (80x faster)
+- Queue (pickle): ~80ms @ 10k gaussians
+- SharedMemory: <1ms @ 10k gaussians (80x faster)
 
 ### 4. NPRGenerator SharedMemory Methods ✅
 
@@ -71,10 +71,10 @@ Zero-copy SharedMemory wrapper for high-performance IPC:
 
 Subprocess 측 SharedMemory 통합:
 
--   `setup_shared_buffer(buffer_name, max_gaussians)` - Buffer 연결
--   `sync_gaussians_from_shared(start_idx, count)` - 메모리 읽기 → PyTorch tensor
--   `compute_deformation_shared(spline_points, radius)` - GPU 변형 계산
--   `cleanup_shared_buffer()` - 리소스 정리
+- `setup_shared_buffer(buffer_name, max_gaussians)` - Buffer 연결
+- `sync_gaussians_from_shared(start_idx, count)` - 메모리 읽기 → PyTorch tensor
+- `compute_deformation_shared(spline_points, radius)` - GPU 변형 계산
+- `cleanup_shared_buffer()` - 리소스 정리
 
 ### 5. HybridDataSync & HybridIPCManager ✅
 
@@ -82,10 +82,10 @@ Subprocess 측 SharedMemory 통합:
 
 NumPy ↔ PyTorch ↔ GLSL 동기화 관리:
 
--   `pack_scene_data(scene_data)` - SceneData → 59-float format
--   `unpack_to_scene_data(packed, scene_data)` - 역변환
--   `sync_to_glsl(scene_data)` - GLSL 텍스처 업데이트
--   `HybridIPCManager` - Queue + SharedMemory 자동 fallback
+- `pack_scene_data(scene_data)` - SceneData → 59-float format
+- `unpack_to_scene_data(packed, scene_data)` - 역변환
+- `sync_to_glsl(scene_data)` - GLSL 텍스처 업데이트
+- `HybridIPCManager` - Queue + SharedMemory 자동 fallback
 
 ### 6. Painting UI Panel ✅
 
@@ -93,10 +93,10 @@ NumPy ↔ PyTorch ↔ GLSL 동기화 관리:
 
 Scene properties 기반 브러시 설정 UI:
 
--   **Brush Settings**: Size, Opacity, Spacing, Color
--   **Brush Pattern**: Circular, Line, Grid
--   **Deformation**: Enable/Disable, Radius
--   **Actions**: Clear All
+- **Brush Settings**: Size, Opacity, Spacing, Color
+- **Brush Pattern**: Circular, Line, Grid
+- **Deformation**: Enable/Disable, Radius
+- **Actions**: Clear All
 
 ```python
 # Scene properties registered:
@@ -165,26 +165,27 @@ benchmark_hybrid_sync(10000)
 
 ## 🐛 알려진 이슈
 
-### 벽면 가우시안 회전 (조사 중)
+### ✅ 벽면 가우시안 회전 (2025-12-06 수정 완료)
 
-벽(수직 표면)에 페인팅할 때 가우시안이 "세로 선" 형태로 보이는 현상 발견.
+벽(수직 표면)에 페인팅할 때 가우시안이 "세로 선" 형태로 보이는 현상이 있었습니다.
 
-**디버깅 결과**:
+**근본 원인**:
 
--   수학적 변환(브러시 프레임 → 스플라인 프레임)은 정확함
--   쿼터니언 변환 및 회전 행렬 계산이 올바름
--   XYZW → WXYZ 변환(렌더러용)도 정상
+- GLSL 셰이더의 `quatToMat` 함수가 **column-major 순서를 고려하지 않음**
+- `mat3` 생성자에 row-major 스타일로 값을 전달하여 회전 행렬이 전치됨
+- 결과적으로 Gaussian의 방향이 잘못 계산됨
 
-**잠재적 원인**:
+**수정 사항**:
 
--   스케일 방향성과 시각적 해석 문제
--   렌더러 depth sorting 이슈
--   추가 시각화 테스트 필요
+- `quatToMat()`: column-major 순서로 재작성
+- `computeCov2D()`: Jacobian 행렬 column-major 순서 수정
+- View space covariance 변환 추가: `cov3D_view = V * cov3D_world * V^T`
 
-**영향 받는 코드**:
+**수정된 파일**:
 
--   `brush.py`: `place_at_batch_arrays()`, `place_at_batch()`
--   `deformation_gpu.py`: `deform_all_stamps_batch_gpu()`
+- `src/viewport/viewport_renderer.py`
+
+**상세 문서**: [WALL_GAUSSIAN_ROTATION_FIX.md](WALL_GAUSSIAN_ROTATION_FIX.md)
 
 ---
 
@@ -201,13 +202,13 @@ benchmark_hybrid_sync(10000)
 
 ### Undo/Redo 시스템
 
--   스트로크 메타데이터 저장
--   Blender undo 시스템 통합
+- 스트로크 메타데이터 저장
+- Blender undo 시스템 통합
 
 ### 성능 최적화
 
--   Incremental viewport update (partial texture update)
--   VRAM 사용량 모니터링
+- Incremental viewport update (partial texture update)
+- VRAM 사용량 모니터링
 
 ---
 
@@ -224,6 +225,6 @@ benchmark_hybrid_sync(10000)
 
 ## 🔗 관련 문서
 
--   `docs/phase4_painting_interaction.md` - 상세 설계
--   `docs/phase4.1_stroke_pipeline.md` - 스트로크 파이프라인
--   `docs/PHASE3_COMPLETE.md` - Phase 3 뷰포트 렌더링
+- `docs/phase4_painting_interaction.md` - 상세 설계
+- `docs/phase4.1_stroke_pipeline.md` - 스트로크 파이프라인
+- `docs/PHASE3_COMPLETE.md` - Phase 3 뷰포트 렌더링

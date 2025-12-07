@@ -90,6 +90,7 @@ if not _is_actor_process:
     from .viewport import viewport_renderer
     from .viewport import panels as viewport_panels
     from .viewport import benchmark as viewport_benchmark
+    from . import vr  # VR/XR module for Quest 3 support
 
     # Will hold all Blender classes to register
     _classes: List[Type] = []
@@ -139,6 +140,12 @@ if not _is_actor_process:
         # Register painting tools (must be after operators)
         tools.register_tools()
         
+        # Register VR module (optional, can be enabled even without VR hardware)
+        try:
+            vr.register()
+        except Exception as e:
+            print(f"[3DGS Painter] VR module registration failed: {e}")
+        
         # Register local classes
         for cls in _classes:
             bpy.utils.register_class(cls)
@@ -169,6 +176,12 @@ if not _is_actor_process:
         except:
             pass
         
+        # Unregister VR module
+        try:
+            vr.unregister()
+        except:
+            pass
+        
         # Unregister viewport module (cleanup renderer)
         viewport_benchmark.unregister_benchmark()
         viewport_panels.unregister_panels()
@@ -183,3 +196,4 @@ if not _is_actor_process:
         preferences.unregister()
         
         print("[3DGS Painter] Addon unregistered")
+

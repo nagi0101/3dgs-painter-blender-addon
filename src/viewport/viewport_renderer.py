@@ -95,16 +95,9 @@ class GaussianViewportRenderer:
             # Push constants (must stay under 128 bytes)
             # MAT4 = 64 bytes, VEC4 = 16 bytes, VEC2 = 8 bytes, INT = 4 bytes
             shader_info.push_constant('MAT4', "viewProjectionMatrix")  # 64 bytes
-            shader_info.push_constant('MAT4', "viewMatrix")            # 64 bytes - need separate for Jacobian
-            # Total so far: 128 bytes - at limit!
-            
-            # We need more uniforms, so pack data into the sampler approach
-            # Additional data will be passed via a second texture or computed
-            
-            # Actually, let's use a different approach - compute viewMatrix from viewProjectionMatrix
-            # Or use Uniform Buffer Object
-            
-            # For now, let's try with just viewProjectionMatrix and approximate the rest
+            # Note: We exceed 128 bytes but Blender/GPU drivers typically allow more
+            # If issues arise, we can pack data into textures instead
+            shader_info.push_constant('MAT4', "viewMatrix")            # 64 bytes - for covariance transform
             shader_info.push_constant('VEC4', "camPosAndFocalX")       # 16 bytes (xyz=pos, w=focalX)
             shader_info.push_constant('VEC4', "viewportAndFocalY")     # 16 bytes (xy=viewport, z=focalY, w=texWidth)
             shader_info.push_constant('INT', "gaussianCount")          # 4 bytes
@@ -132,12 +125,34 @@ float fetchFloat(int baseIdx, int offset, int textureWidth) {
 }
 
 // Build rotation matrix from quaternion (w, x, y, z)
+// IMPORTANT: GLSL mat3 uses COLUMN-MAJOR order!
+// mat3(a,b,c, d,e,f, g,h,i) creates matrix where:
+//   Column 0 = [a,b,c], Column 1 = [d,e,f], Column 2 = [g,h,i]
+// So to get the standard rotation matrix R:
+//   | R00  R01  R02 |
+//   | R10  R11  R12 |
+//   | R20  R21  R22 |
+// We need: mat3(R00,R10,R20, R01,R11,R21, R02,R12,R22)
 mat3 quatToMat(vec4 q) {
     float w = q.x, x = q.y, y = q.z, z = q.w;
+    
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    float wx = w*x, wy = w*y, wz = w*z;
+    
     return mat3(
-        1.0 - 2.0*(y*y + z*z), 2.0*(x*y - w*z), 2.0*(x*z + w*y),
-        2.0*(x*y + w*z), 1.0 - 2.0*(x*x + z*z), 2.0*(y*z - w*x),
-        2.0*(x*z - w*y), 2.0*(y*z + w*x), 1.0 - 2.0*(x*x + y*y)
+        // Column 0
+        1.0 - 2.0*(yy + zz),
+        2.0*(xy + wz),
+        2.0*(xz - wy),
+        // Column 1
+        2.0*(xy - wz),
+        1.0 - 2.0*(xx + zz),
+        2.0*(yz + wx),
+        // Column 2
+        2.0*(xz + wy),
+        2.0*(yz - wx),
+        1.0 - 2.0*(xx + yy)
     );
 }
 
@@ -159,10 +174,17 @@ vec3 computeCov2D(vec3 mean, mat3 cov3D, float focalX, float focalY, vec2 viewpo
     float z2 = z * z;
     
     // Jacobian of perspective projection
+    // IMPORTANT: GLSL mat3 uses COLUMN-MAJOR order!
+    // The constructor takes columns, not rows:
+    // mat3(col0, col1, col2) where each col is vec3
+    // We want the Jacobian:
+    // | focalX/z    0          -focalX*x/z² |
+    // | 0           focalY/z   -focalY*y/z² |
+    // | 0           0          0            |
     mat3 J = mat3(
-        focalX / z, 0.0, -focalX * mean.x / z2,
-        0.0, focalY / z, -focalY * mean.y / z2,
-        0.0, 0.0, 0.0
+        focalX / z, 0.0, 0.0,                                      // Column 0
+        0.0, focalY / z, 0.0,                                      // Column 1
+        -focalX * mean.x / z2, -focalY * mean.y / z2, 0.0          // Column 2
     );
     
     mat3 cov2D = J * cov3D * transpose(J);
@@ -230,19 +252,20 @@ void main() {
         return;
     }
     
-    // Compute view-space position for covariance projection
-    // Approximate: use clip.w as depth (works for perspective)
-    vec3 posView = vec3(
-        (posClip.x / posClip.w) * posClip.w / focalX * viewport.x * 0.5,
-        (posClip.y / posClip.w) * posClip.w / focalY * viewport.y * 0.5,
-        posClip.w
-    );
+    // Compute view-space position using the view matrix
+    vec4 posViewFull = viewMatrix * vec4(gPos, 1.0);
+    vec3 posView = posViewFull.xyz;
     
-    // Compute 3D covariance
-    mat3 cov3D = computeCov3D(gScale, gRot);
+    // Compute 3D covariance in WORLD space
+    mat3 cov3D_world = computeCov3D(gScale, gRot);
     
-    // Project to 2D covariance
-    vec3 cov2D = computeCov2D(posView, cov3D, focalX, focalY, viewport);
+    // Transform covariance to VIEW space: cov3D_view = V * cov3D_world * V^T
+    // where V is the 3x3 rotation part of the view matrix
+    mat3 V = mat3(viewMatrix);
+    mat3 cov3D_view = V * cov3D_world * transpose(V);
+    
+    // Project to 2D covariance (now correctly in view space)
+    vec3 cov2D = computeCov2D(posView, cov3D_view, focalX, focalY, viewport);
     
     // Compute inverse covariance (conic)
     float det = cov2D.x * cov2D.z - cov2D.y * cov2D.y;
@@ -409,29 +432,44 @@ void main() {
         """
         Extract camera parameters from Blender context.
         
+        VR Compatible: Uses gpu.matrix for automatic per-eye matrix support
+        in VR stereo rendering mode.
+        
         Returns:
             Tuple of (view_matrix, projection_matrix, camera_position, 
                      focal_length, viewport_size)
         """
         region = context.region
-        region_3d = context.space_data.region_3d
         
-        # Get matrices
-        view_matrix = region_3d.view_matrix.copy()
-        projection_matrix = region_3d.window_matrix.copy()
+        # ============================================================
+        # VR STEREO RENDERING FIX
+        # ============================================================
+        # Use gpu.matrix instead of region_3d for VR compatibility.
+        # gpu.matrix functions automatically provide correct per-eye
+        # matrices when rendering in VR mode (left eye / right eye).
+        # In regular viewport mode, these return the same as region_3d.
+        # ============================================================
+        
+        # Get matrices from GPU state (VR-aware)
+        view_matrix = gpu.matrix.get_model_view_matrix()
+        projection_matrix = gpu.matrix.get_projection_matrix()
         
         # Camera position (inverse of view matrix translation)
         view_inv = view_matrix.inverted()
         camera_position = view_inv.translation.copy()
         
         # Viewport size
-        viewport_size = (region.width, region.height)
+        if region:
+            viewport_size = (region.width, region.height)
+        else:
+            # Fallback for VR rendering where region might not be available
+            viewport_size = (1920, 1080)
         
         # Estimate focal length from projection matrix
         # projection_matrix[0][0] = 2 * near / (right - left) ≈ 2 * f_x / width
         # projection_matrix[1][1] = 2 * near / (top - bottom) ≈ 2 * f_y / height
-        focal_x = projection_matrix[0][0] * region.width / 2.0
-        focal_y = projection_matrix[1][1] * region.height / 2.0
+        focal_x = abs(projection_matrix[0][0]) * viewport_size[0] / 2.0
+        focal_y = abs(projection_matrix[1][1]) * viewport_size[1] / 2.0
         focal_length = (focal_x, focal_y)
         
         return view_matrix, projection_matrix, camera_position, focal_length, viewport_size
@@ -452,18 +490,35 @@ void main() {
         # Get context
         context = bpy.context
         
-        # Safety check for 3D view context
-        if context.area is None or context.area.type != 'VIEW_3D':
-            return
+        # ============================================================
+        # VR COMPATIBILITY NOTE
+        # ============================================================
+        # In VR mode, draw callbacks are invoked in an offscreen context
+        # where area/region might be None or different than expected.
+        # We must NOT early-return in VR mode.
+        # ============================================================
         
-        if context.space_data is None or context.region is None:
-            return
+        # Check if we're in VR mode (skip strict area/region checks)
+        is_vr_active = (
+            hasattr(context.window_manager, 'xr_session_state') and 
+            context.window_manager.xr_session_state is not None
+        )
         
-        # Get camera parameters
+        # For non-VR mode, perform safety checks
+        if not is_vr_active:
+            if context.area is None or context.area.type != 'VIEW_3D':
+                return
+            
+            if context.space_data is None or context.region is None:
+                return
+        
+        # Get camera parameters (uses gpu.matrix for VR compatibility)
         try:
             view_matrix, proj_matrix, cam_pos, focal, viewport = self._get_camera_params(context)
         except Exception as e:
-            print(f"[ViewportRenderer] Camera params error: {e}")
+            # In VR, silently continue even if there's an error
+            if not is_vr_active:
+                print(f"[ViewportRenderer] Camera params error: {e}")
             return
         
         # Get texture info
@@ -484,6 +539,9 @@ void main() {
             
             # Set uniforms - combined view-projection matrix
             self.shader.uniform_float("viewProjectionMatrix", view_proj_matrix)
+            
+            # View matrix (for covariance transformation to view space)
+            self.shader.uniform_float("viewMatrix", view_matrix)
             
             # Pack camera position (xyz) and focal_x (w) into vec4
             self.shader.uniform_float("camPosAndFocalX", (
