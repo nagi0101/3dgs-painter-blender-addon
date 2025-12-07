@@ -76,6 +76,29 @@ class NPR_PT_VRPanel(Panel):
             
             layout.separator()
             
+            # Phase 2: VR RenderEngine Test (Critical!)
+            box = layout.box()
+            box.label(text="Phase 2: VR RenderEngine", icon='SCENE')
+            
+            current_engine = context.scene.render.engine
+            box.label(text=f"Current: {current_engine}")
+            
+            row = box.row(align=True)
+            row.operator("threegds.vr_engine_test", text="Test VR Engine", icon='PLAY')
+            row.operator("threegds.vr_engine_stats", text="Stats", icon='INFO')
+            
+            row = box.row(align=True)
+            row.operator("threegds.vr_engine_clear", text="Clear", icon='X')
+            row.operator("threegds.switch_to_eevee", text="Back to Eevee", icon='SHADING_RENDERED')
+            
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="1. Click 'Test VR Engine'")
+            col.label(text="2. Start VR Session")
+            col.label(text="3. Check Stats for VR calls!")
+            
+            layout.separator()
+            
             box = layout.box()
             box.label(text="Testing", icon='EXPERIMENTAL')
             box.operator("threegds.test_vr_input", text="Test Controller", icon='OUTLINER_OB_ARMATURE')
