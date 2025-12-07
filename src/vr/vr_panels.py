@@ -22,6 +22,9 @@ class NPR_PT_VRPanel(Panel):
         
         is_running = mgr.is_session_running()
         
+        # ============================================
+        # VR Session Control (always visible)
+        # ============================================
         box = layout.box()
         box.label(text="VR Session", icon='VIEW_CAMERA')
         
@@ -32,73 +35,47 @@ class NPR_PT_VRPanel(Panel):
         else:
             row.operator("threegds.start_vr_session", text="Start VR", icon='PLAY')
         
+        layout.separator()
+        
+        # ============================================
+        # Phase 2: VR RenderEngine Test (ALWAYS VISIBLE!)
+        # ============================================
+        box = layout.box()
+        box.label(text="Phase 2: VR RenderEngine", icon='SCENE')
+        
+        current_engine = context.scene.render.engine
+        box.label(text=f"Engine: {current_engine}")
+        
+        row = box.row(align=True)
+        row.operator("threegds.vr_engine_test", text="Test VR Engine", icon='PLAY')
+        row.operator("threegds.vr_engine_stats", text="Stats", icon='INFO')
+        
+        row = box.row(align=True)
+        row.operator("threegds.vr_engine_clear", text="Clear", icon='X')
+        row.operator("threegds.switch_to_eevee", text="Eevee", icon='SHADING_RENDERED')
+        
+        col = box.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="1. Test VR Engine (PC first)")
+        col.label(text="2. Start VR Session")
+        col.label(text="3. Check Stats!")
+        
+        # ============================================
+        # VR Running sections
+        # ============================================
         if is_running:
             layout.separator()
             
-            # VR Freehand Paint (Tilt Brush style)
+            # VR Freehand Paint
             box = layout.box()
             box.label(text="VR Freehand Paint", icon='BRUSH_DATA')
             row = box.row(align=True)
-            row.operator("threegds.vr_freehand_paint", text="Start Freehand", icon='GREASEPENCIL')
+            row.operator("threegds.vr_freehand_paint", text="Freehand", icon='GREASEPENCIL')
             row.operator("threegds.vr_freehand_clear", text="Clear", icon='X')
             
-            col = box.column(align=True)
-            col.scale_y = 0.8
-            col.label(text="SPACE: Hold to paint")
-            col.label(text="ESC: Exit paint mode")
-            col.label(text="Paint at controller tip")
-            
             layout.separator()
             
-            # Phase 1: VR Offscreen Display (gpu.offscreen + Plane)
-            box = layout.box()
-            box.label(text="VR Offscreen Display", icon='TEXTURE')
-            row = box.row(align=True)
-            row.operator("threegds.vr_offscreen_test", text="Test Display", icon='IMAGE_DATA')
-            row.operator("threegds.vr_offscreen_cleanup", text="Cleanup", icon='TRASH')
-            
-            col = box.column(align=True)
-            col.scale_y = 0.8
-            col.label(text="Phase 1: Renders to 2D Plane")
-            col.label(text="Visible in VR headset!")
-            
-            layout.separator()
-            
-            # Legacy VR Paint (surface-based)
-            box = layout.box()
-            box.label(text="VR Surface Paint (Legacy)", icon='MOD_SMOOTH')
-            box.operator("threegds.vr_paint_stroke", text="Enter Surface Paint", icon='SCULPTMODE_HLT')
-            
-            col = box.column(align=True)
-            col.scale_y = 0.8
-            col.label(text="Right Trigger: Paint")
-            col.label(text="Left Grip: Exit")
-            
-            layout.separator()
-            
-            # Phase 2: VR RenderEngine Test (Critical!)
-            box = layout.box()
-            box.label(text="Phase 2: VR RenderEngine", icon='SCENE')
-            
-            current_engine = context.scene.render.engine
-            box.label(text=f"Current: {current_engine}")
-            
-            row = box.row(align=True)
-            row.operator("threegds.vr_engine_test", text="Test VR Engine", icon='PLAY')
-            row.operator("threegds.vr_engine_stats", text="Stats", icon='INFO')
-            
-            row = box.row(align=True)
-            row.operator("threegds.vr_engine_clear", text="Clear", icon='X')
-            row.operator("threegds.switch_to_eevee", text="Back to Eevee", icon='SHADING_RENDERED')
-            
-            col = box.column(align=True)
-            col.scale_y = 0.8
-            col.label(text="1. Click 'Test VR Engine'")
-            col.label(text="2. Start VR Session")
-            col.label(text="3. Check Stats for VR calls!")
-            
-            layout.separator()
-            
+            # Testing
             box = layout.box()
             box.label(text="Testing", icon='EXPERIMENTAL')
             box.operator("threegds.test_vr_input", text="Test Controller", icon='OUTLINER_OB_ARMATURE')
