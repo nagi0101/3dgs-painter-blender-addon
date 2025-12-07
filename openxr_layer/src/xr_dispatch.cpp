@@ -159,11 +159,21 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
     }
     
     if (g_sharedMemory.IsOpen()) {
+        // Direct buffer inspection for debugging (bypass frame_id check)
+        const auto* buffer = g_sharedMemory.GetBuffer();
+        if (buffer && g_layerState.frame_count % 120 == 0) {
+            LogXr("SHM Debug: magic=0x%08X, frame=%u, count=%u", 
+                buffer->header.magic,
+                buffer->header.frame_id,
+                buffer->header.gaussian_count);
+        }
+        
+        // Normal read with frame_id check
         auto header = g_sharedMemory.ReadHeader();
         if (header.has_value() && header->gaussian_count > 0) {
-            if (g_layerState.frame_count % 120 == 0) {
-                LogXr("Gaussians: %d", header->gaussian_count);
-            }
+            LogXr("NEW Gaussians received: %d (frame_id=%u)", 
+                header->gaussian_count, header->frame_id);
+            g_layerState.gaussian_render_count = header->gaussian_count;
         }
     }
     
