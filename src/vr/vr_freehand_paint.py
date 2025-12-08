@@ -298,6 +298,9 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         tip_pos, tip_rot = result
         
+        # Always update VR view/projection matrices for head tracking
+        self._update_vr_matrices(context)
+        
         # Check if painting (keyboard simulation OR actual VR B button)
         vr_pressed, vr_pressure = is_b_button_pressed(context, hand_index=1)
         is_painting = self._keyboard_triggered or vr_pressed
@@ -527,6 +530,60 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
                 
         except Exception as e:
             print(f"[VR Paint] OpenXR Layer sync error: {e}")
+    
+    def _update_vr_matrices(self, context):
+        """
+        Update VR view/projection matrices every frame for head tracking.
+        
+        This ensures 3D projection updates when user moves their head,
+        even when not actively painting.
+        """
+        try:
+            from .vr_shared_memory import get_shared_memory_writer
+            
+            wm = context.window_manager
+            if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
+                return
+            
+            xr = wm.xr_session_state
+            
+            # Get viewer pose (position + rotation)
+            viewer_pos = xr.viewer_pose_location
+            viewer_rot = xr.viewer_pose_rotation
+            
+            # Build view matrix from viewer pose
+            from mathutils import Matrix
+            rot_mat = viewer_rot.to_matrix().to_4x4()
+            trans_mat = Matrix.Translation(viewer_pos)
+            view_mat = (trans_mat @ rot_mat).inverted()
+            
+            # Transpose for OpenGL (column-major)
+            view_matrix = np.array(view_mat.transposed(), dtype=np.float32).flatten()
+            
+            # Simple perspective projection (90 degree FOV)
+            import math
+            fov = math.radians(90)
+            aspect = 1.0
+            near = 0.1
+            far = 100.0
+            f = 1.0 / math.tan(fov / 2)
+            proj = np.zeros((4, 4), dtype=np.float32)
+            proj[0, 0] = f / aspect
+            proj[1, 1] = f
+            proj[2, 2] = (far + near) / (near - far)
+            proj[2, 3] = (2 * far * near) / (near - far)
+            proj[3, 2] = -1
+            proj_matrix = proj.T.flatten()
+            
+            # Write matrices to shared memory (without Gaussian data update)
+            writer = get_shared_memory_writer()
+            if writer and writer.is_open():
+                # Update only matrices in shared memory header
+                writer.update_matrices(view_matrix, proj_matrix)
+                
+        except Exception as e:
+            # Silently ignore errors to avoid spamming console
+            pass
     
     def _update_preview(self, context, position: Vector, rotation: Quaternion):
         """Update brush preview at controller position."""

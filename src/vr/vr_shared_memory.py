@@ -102,6 +102,53 @@ class SharedMemoryWriter:
     def is_open(self) -> bool:
         return self._created and self._mmap is not None
     
+    def update_matrices(self,
+                        view_matrix: np.ndarray,
+                        proj_matrix: np.ndarray):
+        """
+        Update only the view/projection matrices in shared memory header.
+        
+        This is called every frame to update 3D projection for head tracking,
+        without modifying the Gaussian data.
+        
+        Args:
+            view_matrix: Flat array of 16 floats (column-major)
+            proj_matrix: Flat array of 16 floats (column-major)
+        """
+        if not self._mmap:
+            return
+        
+        self._frame_id += 1
+        
+        # Read current gaussian count from header (offset 12 = magic(4) + version(4) + frame_id(4))
+        self._mmap.seek(12)
+        count_bytes = self._mmap.read(4)
+        gaussian_count = struct.unpack('<I', count_bytes)[0]
+        
+        # Rewrite entire header with updated matrices but same gaussian count
+        header_data = struct.pack('<5I',
+            MAGIC_NUMBER,
+            1,  # version
+            self._frame_id,
+            gaussian_count,
+            0   # flags
+        )
+        
+        # View matrix (16 floats = 64 bytes)
+        if view_matrix is not None and len(view_matrix) >= 16:
+            header_data += struct.pack('<16f', *view_matrix[:16])
+        else:
+            header_data += struct.pack('<16f', *([0.0] * 16))
+        
+        # Projection matrix (16 floats = 64 bytes)
+        if proj_matrix is not None and len(proj_matrix) >= 16:
+            header_data += struct.pack('<16f', *proj_matrix[:16])
+        else:
+            header_data += struct.pack('<16f', *([0.0] * 16))
+        
+        self._mmap.seek(0)
+        self._mmap.write(header_data)
+    
     def _write_header(self, 
                       gaussian_count: int,
                       view_matrix: Optional[np.ndarray],
