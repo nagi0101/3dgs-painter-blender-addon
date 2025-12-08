@@ -86,17 +86,16 @@ def get_controller_tip(context, hand_index: int = 1) -> Optional[Tuple[Vector, Q
         return None
 
 
-def is_trigger_pressed(context, hand_index: int = 1, threshold: float = 0.5) -> Tuple[bool, float]:
+def is_b_button_pressed(context, hand_index: int = 1) -> Tuple[bool, float]:
     """
-    Check if VR trigger is pressed using Blender's XR action system.
+    Check if VR B button is pressed using Blender's XR action system.
     
     Args:
         context: Blender context
         hand_index: 0=left, 1=right (default: right hand)
-        threshold: Trigger activation threshold (0.0-1.0)
     
     Returns:
-        Tuple of (is_pressed, pressure)
+        Tuple of (is_pressed, value)
     """
     wm = context.window_manager
     
@@ -106,24 +105,25 @@ def is_trigger_pressed(context, hand_index: int = 1, threshold: float = 0.5) -> 
     xr = wm.xr_session_state
     user_path = "/user/hand/right" if hand_index == 1 else "/user/hand/left"
     
-    # Try different action names that might be defined
+    # Try different action names for B button
     action_sets = ["blender_default", "default"]
-    action_names = ["trigger", "trigger_value", "trigger_pull", "teleport"]
+    # Quest controllers: b_button, button_b, b, secondary_button
+    action_names = ["b_button", "button_b", "b", "secondary", "secondary_button", "menu"]
     
     for action_set in action_sets:
         for action_name in action_names:
             try:
-                # action_state_get returns a float for 1D actions like trigger
+                # action_state_get returns a boolean or float for button actions
                 value = xr.action_state_get(context, action_set, action_name, user_path)
-                if value is not None and isinstance(value, (int, float)):
-                    is_pressed = float(value) >= threshold
+                if value is not None:
+                    is_pressed = bool(value) if isinstance(value, bool) else float(value) >= 0.5
                     if is_pressed:
-                        print(f"[VR Paint] Trigger detected: {action_set}/{action_name} = {value}")
-                    return is_pressed, float(value)
+                        print(f"[VR Paint] B button detected: {action_set}/{action_name} = {value}")
+                    return is_pressed, float(value) if isinstance(value, (int, float)) else (1.0 if value else 0.0)
             except Exception:
                 pass  # Action not found, try next
     
-    # Fallback: return False if no trigger action found
+    # Fallback: return False if no B button action found
     return False, 0.0
 
 
@@ -298,8 +298,8 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         tip_pos, tip_rot = result
         
-        # Check if painting (keyboard simulation OR actual VR trigger)
-        vr_pressed, vr_pressure = is_trigger_pressed(context, hand_index=1)
+        # Check if painting (keyboard simulation OR actual VR B button)
+        vr_pressed, vr_pressure = is_b_button_pressed(context, hand_index=1)
         is_painting = self._keyboard_triggered or vr_pressed
         
         # Auto-manage stroke state based on trigger
