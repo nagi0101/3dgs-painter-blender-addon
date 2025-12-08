@@ -65,7 +65,7 @@ public:
     /**
      * Check if initialized
      */
-    bool IsInitialized() const { return m_swapchain != XR_NULL_HANDLE; }
+    bool IsInitialized() const { return m_swapchains[0] != XR_NULL_HANDLE; }
     
     /**
      * Begin rendering for a specific eye
@@ -112,12 +112,12 @@ private:
     
     XrInstance m_instance = XR_NULL_HANDLE;
     XrSession m_session = XR_NULL_HANDLE;
-    XrSwapchain m_swapchain = XR_NULL_HANDLE;
+    std::array<XrSwapchain, EYE_COUNT> m_swapchains = {};  // One per eye
     XrSpace m_localSpace = XR_NULL_HANDLE;
     
-    // Stereo swapchain images (arraySize=2)
-    std::vector<XrSwapchainImageOpenGLKHR> m_swapchainImages;
-    uint32_t m_currentImageIndex = 0;
+    // Per-eye swapchain images (separate for each eye)
+    std::array<std::vector<XrSwapchainImageOpenGLKHR>, EYE_COUNT> m_swapchainImages;
+    std::array<uint32_t, EYE_COUNT> m_currentImageIndex = {};
     uint32_t m_width = 1024;
     uint32_t m_height = 1024;
     

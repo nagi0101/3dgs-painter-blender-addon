@@ -159,101 +159,28 @@ uniform vec2 uViewport;      // Viewport size in pixels
 uniform vec2 uFocal;         // Focal lengths (fx, fy)
 
 out vec4 vColor;
-out vec3 vConic;     // Inverse 2D covariance (a, b, c)
-out vec2 vCoordXY;   // Offset from center in pixels
-
-// Quaternion to rotation matrix (column-major)
-mat3 quatToMat(vec4 q) {
-    float w = q.x, x = q.y, y = q.z, z = q.w;
-    
-    float xx = x*x, yy = y*y, zz = z*z;
-    float xy = x*y, xz = x*z, yz = y*z;
-    float wx = w*x, wy = w*y, wz = w*z;
-    
-    return mat3(
-        1.0 - 2.0*(yy + zz), 2.0*(xy + wz), 2.0*(xz - wy),
-        2.0*(xy - wz), 1.0 - 2.0*(xx + zz), 2.0*(yz + wx),
-        2.0*(xz + wy), 2.0*(yz - wx), 1.0 - 2.0*(xx + yy)
-    );
-}
-
-// Compute 3D covariance from scale and rotation
-mat3 computeCov3D(vec3 scale, vec4 rot) {
-    mat3 R = quatToMat(rot);
-    mat3 S = mat3(scale.x, 0.0, 0.0,
-                  0.0, scale.y, 0.0,
-                  0.0, 0.0, scale.z);
-    mat3 RS = R * S;
-    return RS * transpose(RS);
-}
-
-// Project 3D covariance to 2D using Jacobian
-vec3 computeCov2D(vec3 posView, mat3 cov3D, vec2 focal) {
-    float z = posView.z;
-    float z2 = z * z;
-    
-    // Jacobian of perspective projection (column-major)
-    mat3 J = mat3(
-        focal.x / z, 0.0, 0.0,
-        0.0, focal.y / z, 0.0,
-        -focal.x * posView.x / z2, -focal.y * posView.y / z2, 0.0
-    );
-    
-    mat3 cov2D = J * cov3D * transpose(J);
-    
-    // Anti-aliasing filter
-    cov2D[0][0] += 0.3;
-    cov2D[1][1] += 0.3;
-    
-    return vec3(cov2D[0][0], cov2D[0][1], cov2D[1][1]);
-}
+out vec2 vCoordXY;
 
 void main() {
-    // Transform to clip space
+    // Transform to clip space using actual position
     vec4 posClip = uProjMatrix * uViewMatrix * vec4(aPosition, 1.0);
     
-    // Early frustum culling
-    if (posClip.w <= 0.0 || abs(posClip.x/posClip.w) > 1.3 || abs(posClip.y/posClip.w) > 1.3) {
+    // Skip if behind camera
+    if (posClip.w <= 0.01) {
         gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
         return;
     }
     
-    // Compute view-space position
-    vec4 posViewFull = uViewMatrix * vec4(aPosition, 1.0);
-    vec3 posView = posViewFull.xyz;
-    
-    // Compute 3D covariance in world space
-    mat3 cov3D_world = computeCov3D(aScale, aRotation);
-    
-    // Transform to view space
-    mat3 V = mat3(uViewMatrix);
-    mat3 cov3D_view = V * cov3D_world * transpose(V);
-    
-    // Project to 2D
-    vec3 cov2D = computeCov2D(posView, cov3D_view, uFocal);
-    
-    // Compute inverse covariance (conic)
-    float det = cov2D.x * cov2D.z - cov2D.y * cov2D.y;
-    if (det <= 0.0) {
-        gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
-        return;
-    }
-    float detInv = 1.0 / det;
-    vec3 conic = vec3(cov2D.z * detInv, -cov2D.y * detInv, cov2D.x * detInv);
-    
-    // Compute quad extent (3-sigma)
-    float maxRadius = 3.0 * sqrt(max(cov2D.x, cov2D.z));
-    maxRadius = clamp(maxRadius, 1.0, 500.0);
-    
-    // Billboard quad in NDC
-    vec2 quadExtentNDC = vec2(maxRadius) / uViewport * 2.0;
-    posClip.xy += aQuadPos * quadExtentNDC * posClip.w;
+    // Fixed size quads (based on scale but simplified)
+    float size = max(aScale.x, max(aScale.y, aScale.z));
+    float sizeNDC = clamp(size * 0.1, 0.02, 0.3);  // 2% to 30% of screen
+    posClip.xy += aQuadPos * sizeNDC * posClip.w;
     
     gl_Position = posClip;
     
+    // Use actual Gaussian color
     vColor = aColor;
-    vConic = conic;
-    vCoordXY = aQuadPos * maxRadius;
+    vCoordXY = aQuadPos;
 }
 )";
 
@@ -261,34 +188,22 @@ static const char* FRAGMENT_SHADER = R"(
 #version 330 core
 
 in vec4 vColor;
-in vec3 vConic;
 in vec2 vCoordXY;
 
 out vec4 fragColor;
 
 void main() {
-    // Evaluate 2D Gaussian: exp(-0.5 * x^T * conic * x)
-    float power = -0.5 * (
-        vConic.x * vCoordXY.x * vCoordXY.x +
-        vConic.z * vCoordXY.y * vCoordXY.y +
-        2.0 * vConic.y * vCoordXY.x * vCoordXY.y
-    );
-    
-    // Discard if outside 3-sigma
-    if (power > 0.0) {
+    // Simple soft circle
+    float dist = length(vCoordXY);
+    if (dist > 1.0) {
         discard;
     }
     
-    float alpha = vColor.a * exp(power);
+    // Gaussian-like falloff
+    float alpha = exp(-2.0 * dist * dist);
     
-    // Discard nearly transparent
-    if (alpha < 0.004) {
-        discard;
-    }
-    
-    alpha = min(alpha, 0.99);
-    
-    fragColor = vec4(vColor.rgb * alpha, alpha);
+    // Use the Gaussian's color with alpha
+    fragColor = vec4(vColor.rgb * alpha, vColor.a * alpha);
 }
 )";
 
@@ -623,6 +538,18 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         return;
     }
     
+    // Compute center of all Gaussians to offset them relative to VR origin
+    // This handles the coordinate system mismatch between Blender world and OpenXR LOCAL
+    float centerX = 0, centerY = 0, centerZ = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        centerX += gaussians[i].position[0];
+        centerY += gaussians[i].position[1];
+        centerZ += gaussians[i].position[2];
+    }
+    centerX /= count;
+    centerY /= count;
+    centerZ /= count;
+    
     // Prepare instance data: [position(3) + rotation(4) + scale(3) + color(4)] = 14 floats per gaussian
     const int floatsPerInstance = 14;
     std::vector<float> instanceData(count * floatsPerInstance);
@@ -631,9 +558,10 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         int base = i * floatsPerInstance;
         const auto& g = gaussians[i];
         
-        instanceData[base + 0] = g.position[0];
-        instanceData[base + 1] = g.position[1];
-        instanceData[base + 2] = g.position[2];
+        // Offset position to bring center to VR origin (approximately 1m in front of user)
+        instanceData[base + 0] = g.position[0] - centerX;
+        instanceData[base + 1] = g.position[1] - centerY;
+        instanceData[base + 2] = g.position[2] - centerZ - 1.0f;  // 1m in front
         instanceData[base + 3] = g.rotation[0];
         instanceData[base + 4] = g.rotation[1];
         instanceData[base + 5] = g.rotation[2];
@@ -707,6 +635,12 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
     
     // Draw instanced quads
     if (pfn_glDrawArraysInstanced) {
+        static bool loggedDraw = false;
+        if (!loggedDraw) {
+            printf("[GaussianRender] DRAW CALL: count=%u, program=%u, vao=%u\n", count, m_shaderProgram, m_vao);
+            fflush(stdout);
+            loggedDraw = true;
+        }
         pfn_glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
     }
     

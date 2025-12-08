@@ -209,11 +209,13 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
             if (GetGaussianRenderer().Initialize()) {
                 rendererInitialized = true;
                 LogXr("GaussianRenderer initialized for stereo");
+            } else {
+                LogXr("GaussianRenderer initialization FAILED");
             }
         }
         
         // Locate views for this frame (get per-eye poses)
-        GetProjectionLayer().LocateViews(frameEndInfo->displayTime);
+        bool viewsLocated = GetProjectionLayer().LocateViews(frameEndInfo->displayTime);
         
         // Render to each eye
         for (uint32_t eye = 0; eye < 2; eye++) {
@@ -231,13 +233,15 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
                         const float* viewMatrix = GetProjectionLayer().GetViewMatrix(eye);
                         const float* projMatrix = GetProjectionLayer().GetProjectionMatrix(eye);
                         
-                        GetGaussianRenderer().RenderFromPrimitivesWithMatrices(
-                            buffer->gaussians,
-                            buffer->header.gaussian_count,
-                            viewMatrix,
-                            projMatrix,
-                            1024, 1024  // viewport size
-                        );
+                        if (viewMatrix && projMatrix) {
+                            GetGaussianRenderer().RenderFromPrimitivesWithMatrices(
+                                buffer->gaussians,
+                                buffer->header.gaussian_count,
+                                viewMatrix,
+                                projMatrix,
+                                1024, 1024  // viewport size
+                            );
+                        }
                     }
                 }
                 

@@ -24,14 +24,14 @@
 typedef void (APIENTRY *PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
 typedef void (APIENTRY *PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint *framebuffers);
 typedef void (APIENTRY *PFNGLBINDFRAMEBUFFERSPROC)(GLenum target, GLuint framebuffer);
-typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURELAYERPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer);
+typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
 typedef GLenum (APIENTRY *PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
 
 // Static function pointers
 static PFNGLGENFRAMEBUFFERSPROC pfn_glGenFramebuffers = nullptr;
 static PFNGLDELETEFRAMEBUFFERSPROC pfn_glDeleteFramebuffers = nullptr;
 static PFNGLBINDFRAMEBUFFERSPROC pfn_glBindFramebuffer = nullptr;
-static PFNGLFRAMEBUFFERTEXTURELAYERPROC pfn_glFramebufferTextureLayer = nullptr;
+static PFNGLFRAMEBUFFERTEXTURE2DPROC pfn_glFramebufferTexture2D = nullptr;
 static PFNGLCHECKFRAMEBUFFERSTATUSPROC pfn_glCheckFramebufferStatus = nullptr;
 static bool g_glExtensionsLoaded = false;
 
@@ -56,10 +56,10 @@ static bool LoadGLExtensions() {
     pfn_glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
     pfn_glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
     pfn_glBindFramebuffer = (PFNGLBINDFRAMEBUFFERSPROC)wglGetProcAddress("glBindFramebuffer");
-    pfn_glFramebufferTextureLayer = (PFNGLFRAMEBUFFERTEXTURELAYERPROC)wglGetProcAddress("glFramebufferTextureLayer");
+    pfn_glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
     pfn_glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
     
-    g_glExtensionsLoaded = (pfn_glGenFramebuffers && pfn_glBindFramebuffer && pfn_glFramebufferTextureLayer);
+    g_glExtensionsLoaded = (pfn_glGenFramebuffers && pfn_glBindFramebuffer && pfn_glFramebufferTexture2D);
     return g_glExtensionsLoaded;
 }
 
@@ -174,9 +174,11 @@ bool ProjectionLayer::Initialize(
 }
 
 void ProjectionLayer::Shutdown() {
-    if (m_swapchain != XR_NULL_HANDLE && pfn_xrDestroySwapchain) {
-        pfn_xrDestroySwapchain(m_swapchain);
-        m_swapchain = XR_NULL_HANDLE;
+    for (int i = 0; i < EYE_COUNT; i++) {
+        if (m_swapchains[i] != XR_NULL_HANDLE && pfn_xrDestroySwapchain) {
+            pfn_xrDestroySwapchain(m_swapchains[i]);
+            m_swapchains[i] = XR_NULL_HANDLE;
+        }
     }
     
     if (m_localSpace != XR_NULL_HANDLE && pfn_xrDestroySpace) {
@@ -193,7 +195,9 @@ void ProjectionLayer::Shutdown() {
         }
     }
     
-    m_swapchainImages.clear();
+    for (int i = 0; i < EYE_COUNT; i++) {
+        m_swapchainImages[i].clear();
+    }
 }
 
 bool ProjectionLayer::CreateReferenceSpace() {
@@ -212,47 +216,50 @@ bool ProjectionLayer::CreateReferenceSpace() {
 }
 
 bool ProjectionLayer::CreateStereoSwapchain(uint32_t width, uint32_t height) {
-    // Create stereo swapchain with arraySize=2 (one slice per eye)
-    XrSwapchainCreateInfo createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
-    createInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
-    createInfo.format = GL_RGBA8;
-    createInfo.sampleCount = 1;
-    createInfo.width = width;
-    createInfo.height = height;
-    createInfo.faceCount = 1;
-    createInfo.arraySize = EYE_COUNT;  // STEREO: 2 layers
-    createInfo.mipCount = 1;
-    
-    XrResult result = pfn_xrCreateSwapchain(m_session, &createInfo, &m_swapchain);
-    if (result != XR_SUCCESS) {
-        LogProj("xrCreateSwapchain failed: %d", result);
-        return false;
+    // Create SEPARATE swapchain for each eye (not texture array)
+    // This is more compatible with OpenGL FBO binding
+    for (uint32_t eye = 0; eye < EYE_COUNT; eye++) {
+        XrSwapchainCreateInfo createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
+        createInfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+        createInfo.format = GL_RGBA8;
+        createInfo.sampleCount = 1;
+        createInfo.width = width;
+        createInfo.height = height;
+        createInfo.faceCount = 1;
+        createInfo.arraySize = 1;  // Single texture per eye
+        createInfo.mipCount = 1;
+        
+        XrResult result = pfn_xrCreateSwapchain(m_session, &createInfo, &m_swapchains[eye]);
+        if (result != XR_SUCCESS) {
+            LogProj("xrCreateSwapchain failed for eye %d: %d", eye, result);
+            return false;
+        }
+        
+        // Enumerate swapchain images for this eye
+        uint32_t imageCount = 0;
+        pfn_xrEnumerateSwapchainImages(m_swapchains[eye], 0, &imageCount, nullptr);
+        
+        m_swapchainImages[eye].resize(imageCount);
+        for (auto& img : m_swapchainImages[eye]) {
+            img.type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR;
+            img.next = nullptr;
+        }
+        
+        result = pfn_xrEnumerateSwapchainImages(
+            m_swapchains[eye],
+            imageCount,
+            &imageCount,
+            (XrSwapchainImageBaseHeader*)m_swapchainImages[eye].data());
+        
+        if (result != XR_SUCCESS) {
+            LogProj("xrEnumerateSwapchainImages failed for eye %d: %d", eye, result);
+            return false;
+        }
+        
+        LogProj("Eye %d: %d swapchain images", eye, imageCount);
     }
     
-    LogProj("Created stereo swapchain (arraySize=%d)", EYE_COUNT);
-    
-    // Enumerate swapchain images
-    uint32_t imageCount = 0;
-    pfn_xrEnumerateSwapchainImages(m_swapchain, 0, &imageCount, nullptr);
-    
-    m_swapchainImages.resize(imageCount);
-    for (auto& img : m_swapchainImages) {
-        img.type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR;
-        img.next = nullptr;
-    }
-    
-    result = pfn_xrEnumerateSwapchainImages(
-        m_swapchain,
-        imageCount,
-        &imageCount,
-        (XrSwapchainImageBaseHeader*)m_swapchainImages.data());
-    
-    if (result != XR_SUCCESS) {
-        LogProj("xrEnumerateSwapchainImages failed: %d", result);
-        return false;
-    }
-    
-    LogProj("Swapchain has %d images", imageCount);
+    LogProj("Created separate swapchains for each eye");
     return true;
 }
 
@@ -306,7 +313,7 @@ void ProjectionLayer::ComputeViewMatrix(const XrPosef& pose, float* outMatrix) {
     const XrQuaternionf& q = pose.orientation;
     const XrVector3f& p = pose.position;
     
-    // Quaternion to rotation matrix
+    // Quaternion to rotation matrix R
     float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
     float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
     float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
@@ -321,12 +328,22 @@ void ProjectionLayer::ComputeViewMatrix(const XrPosef& pose, float* outMatrix) {
     float r21 = 2.0f * (yz + wx);
     float r22 = 1.0f - 2.0f * (xx + yy);
     
-    // View matrix = inverse(pose) = transpose(R) with -R^T * p
-    // Column-major order for OpenGL
-    outMatrix[0] = r00;  outMatrix[4] = r01;  outMatrix[8]  = r02;  outMatrix[12] = -(r00*p.x + r01*p.y + r02*p.z);
-    outMatrix[1] = r10;  outMatrix[5] = r11;  outMatrix[9]  = r12;  outMatrix[13] = -(r10*p.x + r11*p.y + r12*p.z);
-    outMatrix[2] = r20;  outMatrix[6] = r21;  outMatrix[10] = r22;  outMatrix[14] = -(r20*p.x + r21*p.y + r22*p.z);
-    outMatrix[3] = 0.0f; outMatrix[7] = 0.0f; outMatrix[11] = 0.0f; outMatrix[15] = 1.0f;
+    // View matrix = inverse(pose) = [R^T | -R^T * p]
+    // IMPORTANT: Must use R^T (transpose), not R!
+    // Column-major order for OpenGL:
+    // Column 0: R^T row 0 = R col 0 = (r00, r01, r02)
+    // Column 1: R^T row 1 = R col 1 = (r10, r11, r12)
+    // Column 2: R^T row 2 = R col 2 = (r20, r21, r22)
+    outMatrix[0] = r00;  outMatrix[4] = r10;  outMatrix[8]  = r20;
+    outMatrix[1] = r01;  outMatrix[5] = r11;  outMatrix[9]  = r21;
+    outMatrix[2] = r02;  outMatrix[6] = r12;  outMatrix[10] = r22;
+    outMatrix[3] = 0.0f; outMatrix[7] = 0.0f; outMatrix[11] = 0.0f;
+    
+    // Translation: -R^T * p
+    outMatrix[12] = -(r00*p.x + r10*p.y + r20*p.z);
+    outMatrix[13] = -(r01*p.x + r11*p.y + r21*p.z);
+    outMatrix[14] = -(r02*p.x + r12*p.y + r22*p.z);
+    outMatrix[15] = 1.0f;
 }
 
 void ProjectionLayer::ComputeProjectionMatrix(const XrFovf& fov, float nearZ, float farZ, float* outMatrix) {
@@ -356,32 +373,31 @@ GLuint ProjectionLayer::BeginRenderEye(uint32_t eyeIndex) {
         return 0;
     }
     
-    // Acquire swapchain image (only once per frame, for first eye)
-    if (eyeIndex == 0) {
-        XrSwapchainImageAcquireInfo acquireInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-        XrResult result = pfn_xrAcquireSwapchainImage(m_swapchain, &acquireInfo, &m_currentImageIndex);
-        if (result != XR_SUCCESS) {
-            LogProj("xrAcquireSwapchainImage failed: %d", result);
-            return 0;
-        }
-        
-        XrSwapchainImageWaitInfo waitInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-        waitInfo.timeout = XR_INFINITE_DURATION;
-        result = pfn_xrWaitSwapchainImage(m_swapchain, &waitInfo);
-        if (result != XR_SUCCESS) {
-            LogProj("xrWaitSwapchainImage failed: %d", result);
-            return 0;
-        }
+    // Acquire swapchain image for THIS eye
+    XrSwapchainImageAcquireInfo acquireInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+    XrResult result = pfn_xrAcquireSwapchainImage(m_swapchains[eyeIndex], &acquireInfo, &m_currentImageIndex[eyeIndex]);
+    if (result != XR_SUCCESS) {
+        LogProj("xrAcquireSwapchainImage failed for eye %d: %d", eyeIndex, result);
+        return 0;
+    }
+    
+    XrSwapchainImageWaitInfo waitInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    waitInfo.timeout = XR_INFINITE_DURATION;
+    result = pfn_xrWaitSwapchainImage(m_swapchains[eyeIndex], &waitInfo);
+    if (result != XR_SUCCESS) {
+        LogProj("xrWaitSwapchainImage failed for eye %d: %d", eyeIndex, result);
+        return 0;
     }
     
     m_currentEye = eyeIndex;
     m_renderInProgress = true;
     
-    // Get texture from swapchain and bind FBO to the correct array layer
-    GLuint texture = m_swapchainImages[m_currentImageIndex].image;
+    // Get texture from swapchain (regular 2D texture, not array)
+    GLuint texture = m_swapchainImages[eyeIndex][m_currentImageIndex[eyeIndex]].image;
     
     pfn_glBindFramebuffer(GL_FRAMEBUFFER, m_fbos[eyeIndex]);
-    pfn_glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, eyeIndex);
+    // Use glFramebufferTexture2D instead of glFramebufferTextureLayer
+    pfn_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
     
     GLenum status = pfn_glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -398,11 +414,9 @@ void ProjectionLayer::EndRenderEye() {
     
     pfn_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     
-    // Release swapchain image only after rendering both eyes
-    if (m_currentEye == EYE_COUNT - 1) {
-        XrSwapchainImageReleaseInfo releaseInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-        pfn_xrReleaseSwapchainImage(m_swapchain, &releaseInfo);
-    }
+    // Release swapchain image for THIS eye
+    XrSwapchainImageReleaseInfo releaseInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+    pfn_xrReleaseSwapchainImage(m_swapchains[m_currentEye], &releaseInfo);
     
     m_renderInProgress = false;
 }
@@ -428,8 +442,8 @@ const XrCompositionLayerBaseHeader* ProjectionLayer::GetLayer() {
         m_projectionViews[eye].next = nullptr;
         m_projectionViews[eye].pose = m_views[eye].pose;
         m_projectionViews[eye].fov = m_views[eye].fov;
-        m_projectionViews[eye].subImage.swapchain = m_swapchain;
-        m_projectionViews[eye].subImage.imageArrayIndex = eye;
+        m_projectionViews[eye].subImage.swapchain = m_swapchains[eye];  // Separate swapchain per eye
+        m_projectionViews[eye].subImage.imageArrayIndex = 0;  // Not array, just 0
         m_projectionViews[eye].subImage.imageRect.offset = { 0, 0 };
         m_projectionViews[eye].subImage.imageRect.extent = { (int32_t)m_width, (int32_t)m_height };
     }
