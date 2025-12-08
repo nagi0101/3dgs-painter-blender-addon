@@ -200,7 +200,7 @@ class THREEGDS_OT_StartVRSession(Operator):
         
         # Add paint action to blender_default
         if try_add_paint_action_now():
-            self.report({'INFO'}, "VR started - Press B button to paint")
+            self.report({'INFO'}, "VR started - Hold TRIGGER to paint")
         else:
             self.report({'WARNING'}, "VR started but paint action not registered")
         

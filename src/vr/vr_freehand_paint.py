@@ -258,12 +258,12 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         self._accumulated_gaussians = []
         self._keyboard_triggered = False
         
-        # Register VR B button action binding
+        # Register VR TRIGGER action binding
         if not is_actions_registered():
             if register_paint_action(context):
-                print("[VR Paint] B button action registered successfully")
+                print("[VR Paint] TRIGGER binding ready")
             else:
-                print("[VR Paint] B button action registration failed, SPACE key fallback available")
+                print("[VR Paint] TRIGGER binding failed, SPACE key fallback available")
         
         # Add timer for continuous polling (10ms = 100Hz)
         wm = context.window_manager

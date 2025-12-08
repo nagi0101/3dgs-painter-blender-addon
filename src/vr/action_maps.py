@@ -50,7 +50,7 @@ def add_paint_action(session_state):
             amb.axis1_region = 'ANY'
         
         _paint_action_added = True
-        print("[3DGS VR] Paint action added to actionmap (B button)")
+        print("[3DGS VR] Paint action registered (TRIGGER for painting)")
         return True
         
     except Exception as e:
