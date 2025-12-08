@@ -456,6 +456,7 @@ class BrushStamp:
 
             # Apply size multiplier
             g.scale = base_g.scale * self.current_size_multiplier
+            g.position = base_g.position * self.current_size_multiplier
             # Apply global opacity (multiply with pattern opacity)
             g.opacity = base_g.opacity * self.current_global_opacity
             self.gaussians.append(g)
