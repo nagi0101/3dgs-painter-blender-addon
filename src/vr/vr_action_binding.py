@@ -9,7 +9,7 @@ OpenXR B button path: /user/hand/right/input/b/click
 """
 
 import bpy
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 # Action set and action names
 ACTION_SET_NAME = "3dgs_paint"
@@ -19,14 +19,57 @@ B_BUTTON_PATH = "/user/hand/right/input/b/click"
 # Touch controller profile (Quest 2/3, Rift S)
 OCULUS_PROFILE = "/interaction_profiles/oculus/touch_controller"
 
-# Track if actions are registered
+# Track state
 _actions_registered = False
-_debug_counter = 0  # Limit debug output
+_debug_counter = 0
+_enumerated = False
+_found_actions: List[Tuple[str, str]] = []  # (action_set, action_name) pairs
+
+
+def enumerate_all_actions(context) -> List[Tuple[str, str]]:
+    """
+    Enumerate all existing VR actions and print them for debugging.
+    
+    Returns:
+        List of (action_set_name, action_name) tuples
+    """
+    global _enumerated, _found_actions
+    
+    if _enumerated:
+        return _found_actions
+    
+    wm = context.window_manager
+    
+    if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
+        return []
+    
+    xr = wm.xr_session_state
+    actions = []
+    
+    print("\n[VR ActionBinding] ========== ENUMERATING ALL VR ACTIONS ==========")
+    
+    for am in xr.actionmaps:
+        print(f"\n[VR ActionBinding] ActionMap: '{am.name}'")
+        for item in am.actionmap_items:
+            print(f"  - Action: '{item.name}' (type: {item.type})")
+            actions.append((am.name, item.name))
+            
+            # Print bindings
+            for binding in item.bindings:
+                print(f"    Binding: {binding.name}")
+                for cp in binding.component_paths:
+                    print(f"      Component: {cp.path}")
+    
+    print(f"\n[VR ActionBinding] ========== FOUND {len(actions)} ACTIONS ==========\n")
+    
+    _enumerated = True
+    _found_actions = actions
+    return actions
 
 
 def register_paint_action(context) -> bool:
     """
-    Register the paint action for VR B button.
+    Register the paint action for VR B button (or find existing one).
     
     Call this when VR session starts.
     
@@ -44,98 +87,24 @@ def register_paint_action(context) -> bool:
         print("[VR ActionBinding] No XR session state")
         return False
     
-    xr = wm.xr_session_state
+    # First, enumerate all existing actions
+    actions = enumerate_all_actions(context)
     
-    try:
-        # Enable VR actions if available
-        if hasattr(context.scene, 'vr_actions_enable'):
-            context.scene.vr_actions_enable = True
-            print("[VR ActionBinding] Enabled scene.vr_actions_enable")
-        
-        # Check if our action map already exists
-        for am in xr.actionmaps:
-            if am.name == ACTION_SET_NAME:
-                print(f"[VR ActionBinding] Action map '{ACTION_SET_NAME}' already exists")
-                # Still need to activate it
-                _activate_action_set(xr, context)
-                _actions_registered = True
-                return True
-        
-        # Create new action map
-        actionmap = xr.actionmaps.new(xr, ACTION_SET_NAME, True)
-        print(f"[VR ActionBinding] Created action map: {ACTION_SET_NAME}")
-        
-        # Create action for paint button (FLOAT type for button)
-        action = actionmap.actionmap_items.new(PAINT_ACTION_NAME, True)
-        action.type = 'FLOAT'  # Button press as float 0.0 - 1.0
-        
-        # Add user paths using the collection API (Blender 5.0+)
-        action.user_paths.new("/user/hand/right")
-        action.user_paths.new("/user/hand/left")
-        print(f"[VR ActionBinding] Created action: {PAINT_ACTION_NAME}")
-        
-        # Create binding for Oculus Touch controller profile
-        binding = action.bindings.new(OCULUS_PROFILE, True)
-        binding.component_paths.new(B_BUTTON_PATH)
-        print(f"[VR ActionBinding] Created binding: {OCULUS_PROFILE} -> {B_BUTTON_PATH}")
-        
-        # Activate the action set
-        _activate_action_set(xr, context)
-        
-        _actions_registered = True
-        print("[VR ActionBinding] Paint action registered successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"[VR ActionBinding] Error registering action: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def _activate_action_set(xr, context):
-    """Activate our action set for the VR session."""
-    try:
-        # Try to set as active action set
-        if hasattr(xr, 'active_action_set_set'):
-            xr.active_action_set_set(context, ACTION_SET_NAME)
-            print(f"[VR ActionBinding] Activated action set: {ACTION_SET_NAME}")
-        else:
-            print("[VR ActionBinding] WARNING: active_action_set_set not available")
-    except Exception as e:
-        print(f"[VR ActionBinding] Error activating action set: {e}")
-
-
-def unregister_paint_action(context):
-    """
-    Unregister the paint action.
+    # Enable VR actions if available
+    if hasattr(context.scene, 'vr_actions_enable'):
+        context.scene.vr_actions_enable = True
+        print("[VR ActionBinding] Enabled scene.vr_actions_enable")
     
-    Call this when VR session ends or addon is disabled.
-    """
-    global _actions_registered
-    
-    wm = context.window_manager
-    
-    if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
-        return
-    
-    xr = wm.xr_session_state
-    
-    try:
-        for i, am in enumerate(xr.actionmaps):
-            if am.name == ACTION_SET_NAME:
-                xr.actionmaps.remove(xr, am)
-                print(f"[VR ActionBinding] Removed action map: {ACTION_SET_NAME}")
-                break
-    except Exception as e:
-        print(f"[VR ActionBinding] Error unregistering: {e}")
-    
-    _actions_registered = False
+    _actions_registered = True
+    print("[VR ActionBinding] Ready to poll actions")
+    return True
 
 
 def get_paint_button_state(context) -> Tuple[bool, float]:
     """
     Get the current state of the paint button (B button).
+    
+    Tries all available actions to find one that responds.
     
     Args:
         context: Blender context
@@ -150,63 +119,45 @@ def get_paint_button_state(context) -> Tuple[bool, float]:
         return False, 0.0
     
     xr = wm.xr_session_state
+    _debug_counter += 1
     
-    # Try our custom action first
-    try:
-        value = xr.action_state_get(
-            context,
-            ACTION_SET_NAME,
-            PAINT_ACTION_NAME,
-            "/user/hand/right"
-        )
-        
-        # Debug logging (every 100 calls to avoid spam)
-        _debug_counter += 1
-        if _debug_counter % 100 == 1:
-            print(f"[VR ActionBinding] action_state_get returned: {value} (type: {type(value).__name__})")
-        
-        if value is not None:
-            # Handle different return types
-            if isinstance(value, bool):
-                if value:
-                    print(f"[VR ActionBinding] B button PRESSED! (bool={value})")
-                return value, 1.0 if value else 0.0
-            elif isinstance(value, (int, float)):
-                is_pressed = float(value) >= 0.5
-                if is_pressed:
-                    print(f"[VR ActionBinding] B button PRESSED! (value={value})")
-                return is_pressed, float(value)
-            elif hasattr(value, '__len__') and len(value) > 0:
-                val = value[0]
-                is_pressed = float(val) >= 0.5
-                if is_pressed:
-                    print(f"[VR ActionBinding] B button PRESSED! (array[0]={val})")
-                return is_pressed, float(val)
-    except Exception as e:
-        if _debug_counter % 100 == 1:
-            print(f"[VR ActionBinding] action_state_get exception: {e}")
-    
-    # Fallback: try standard Blender action names
-    fallback_names = ["b_button", "button_b", "secondary"]
-    fallback_sets = ["blender_default", "default"]
-    
-    for action_set in fallback_sets:
-        for action_name in fallback_names:
+    # Try all found actions
+    for action_set, action_name in _found_actions:
+        for user_path in ["/user/hand/right", "/user/hand/left"]:
             try:
                 value = xr.action_state_get(
                     context,
                     action_set,
                     action_name,
-                    "/user/hand/right"
+                    user_path
                 )
+                
                 if value is not None:
-                    if isinstance(value, bool):
-                        return value, 1.0 if value else 0.0
-                    elif isinstance(value, (int, float)):
-                        is_pressed = float(value) >= 0.5
-                        return is_pressed, float(value)
-            except:
+                    # Handle tuple (value, changed) format
+                    if isinstance(value, tuple) and len(value) >= 1:
+                        val = value[0]
+                        if isinstance(val, (int, float)) and float(val) >= 0.5:
+                            print(f"[VR ActionBinding] PRESSED! {action_set}/{action_name} = {val}")
+                            return True, float(val)
+                    # Handle direct value
+                    elif isinstance(value, (int, float)) and float(value) >= 0.5:
+                        print(f"[VR ActionBinding] PRESSED! {action_set}/{action_name} = {value}")
+                        return True, float(value)
+                    elif isinstance(value, bool) and value:
+                        print(f"[VR ActionBinding] PRESSED! {action_set}/{action_name} = {value}")
+                        return True, 1.0
+                        
+            except Exception:
                 pass
+    
+    # Debug: show first action's value periodically
+    if _debug_counter % 200 == 1 and len(_found_actions) > 0:
+        action_set, action_name = _found_actions[0]
+        try:
+            value = xr.action_state_get(context, action_set, action_name, "/user/hand/right")
+            print(f"[VR ActionBinding] Sample action '{action_set}/{action_name}' = {value}")
+        except Exception as e:
+            print(f"[VR ActionBinding] Sample action error: {e}")
     
     return False, 0.0
 
