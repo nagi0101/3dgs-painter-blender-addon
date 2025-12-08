@@ -296,12 +296,36 @@ GLuint QuadLayer::BeginRender() {
     }
     
     m_renderInProgress = true;
-    return m_swapchainImages[m_currentImageIndex].image;
+    
+    // Create and bind FBO for rendering
+    if (!LoadGLExtensions()) {
+        return 0;
+    }
+    
+    if (m_fbo == 0) {
+        CreateFBO();
+    }
+    
+    GLuint texture = m_swapchainImages[m_currentImageIndex].image;
+    
+    // Bind FBO and attach texture
+    pfn_glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    pfn_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    
+    // Set viewport
+    glViewport(0, 0, m_width, m_height);
+    
+    return texture;
 }
 
 void QuadLayer::EndRender() {
     if (!m_renderInProgress || !pfn_xrReleaseSwapchainImage) {
         return;
+    }
+    
+    // Unbind FBO
+    if (pfn_glBindFramebuffer) {
+        pfn_glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
     
     XrSwapchainImageReleaseInfo releaseInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
@@ -396,12 +420,11 @@ void QuadLayer::ClearWithColor(float r, float g, float b, float a) {
     // Set viewport
     glViewport(0, 0, m_width, m_height);
     
-    // Clear with color
+    // Clear with color (FBO is already bound from BeginRender)
     glClearColor(r, g, b, a);
     glClear(GL_COLOR_BUFFER_BIT);
     
-    // Unbind FBO (return to default)
-    pfn_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Keep FBO bound for subsequent rendering operations
 }
 
 }  // namespace gaussian
