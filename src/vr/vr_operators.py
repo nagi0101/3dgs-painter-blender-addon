@@ -4,11 +4,86 @@
 import bpy
 from bpy.types import Operator
 import numpy as np
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 from .vr_session import get_vr_session_manager
 from .vr_input import get_vr_input_manager, ControllerHand
 from .action_maps import try_add_paint_action_now
+
+
+# ============================================
+# Continuous VR Matrix Updater
+# ============================================
+_vr_matrix_updater_running = False
+
+def _vr_matrix_update_callback():
+    """
+    Timer callback that continuously updates view matrix to shared memory.
+    This ensures Gaussians stay world-fixed when viewport moves.
+    """
+    global _vr_matrix_updater_running
+    
+    if not _vr_matrix_updater_running:
+        return None  # Stop timer
+    
+    mgr = get_vr_session_manager()
+    if not mgr.is_session_running():
+        _vr_matrix_updater_running = False
+        return None  # Stop timer
+    
+    try:
+        from .vr_shared_memory import get_shared_memory_writer
+        
+        wm = bpy.context.window_manager
+        if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
+            return 0.016  # Try again in 16ms
+        
+        xr = wm.xr_session_state
+        
+        # Get current viewer pose (includes teleport/viewport offset)
+        viewer_pos = xr.viewer_pose_location
+        viewer_rot = xr.viewer_pose_rotation
+        
+        # Build view matrix
+        rot_mat = viewer_rot.to_matrix().to_4x4()
+        trans_mat = Matrix.Translation(viewer_pos)
+        view_mat = (trans_mat @ rot_mat).inverted()
+        view_matrix = np.array(view_mat.transposed(), dtype=np.float32).flatten()
+        
+        # Get camera rotation for coordinate alignment
+        camera = bpy.context.scene.camera
+        camera_rotation = None
+        if camera:
+            cam_rot = camera.rotation_euler.to_quaternion()
+            camera_rotation = (cam_rot.w, cam_rot.x, cam_rot.y, cam_rot.z)
+        
+        # Update shared memory with current matrices
+        writer = get_shared_memory_writer()
+        if writer.is_open():
+            # Only update matrices, not Gaussian data
+            writer.update_matrices(view_matrix, None, camera_rotation)
+        
+    except Exception as e:
+        print(f"[VR Matrix] Update error: {e}")
+    
+    return 0.016  # Continue every 16ms (~60hz)
+
+
+def _start_vr_matrix_updater():
+    """Start the continuous VR matrix updater."""
+    global _vr_matrix_updater_running
+    if _vr_matrix_updater_running:
+        return
+    _vr_matrix_updater_running = True
+    bpy.app.timers.register(_vr_matrix_update_callback, first_interval=0.1)
+    print("[VR Matrix] Continuous updater started")
+
+
+def _stop_vr_matrix_updater():
+    """Stop the continuous VR matrix updater."""
+    global _vr_matrix_updater_running
+    _vr_matrix_updater_running = False
+    print("[VR Matrix] Continuous updater stopped")
 
 
 class THREEGDS_OT_VRPaintStroke(Operator):
@@ -198,6 +273,9 @@ class THREEGDS_OT_StartVRSession(Operator):
             self.report({'ERROR'}, "Failed to start VR")
             return {'CANCELLED'}
         
+        # Start continuous view matrix updater
+        _start_vr_matrix_updater()
+        
         # Add paint action to blender_default
         if try_add_paint_action_now():
             self.report({'INFO'}, "VR started - Hold TRIGGER to paint")
@@ -218,6 +296,9 @@ class THREEGDS_OT_StopVRSession(Operator):
         return get_vr_session_manager().is_session_running()
     
     def execute(self, context):
+        # Stop matrix updater first
+        _stop_vr_matrix_updater()
+        
         if get_vr_session_manager().stop_vr_session():
             self.report({'INFO'}, "VR stopped")
             return {'FINISHED'}

@@ -229,10 +229,17 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
                 if (rendererInitialized && g_sharedMemory.IsOpen() && g_layerState.gaussian_render_count > 0) {
                     const auto* buffer = g_sharedMemory.GetBuffer();
                     if (buffer && buffer->header.gaussian_count > 0) {
-                        // Get per-eye matrices from ProjectionLayer for stereo rendering
-                        // Reference space is now aligned with camera rotation
-                        const float* viewMatrix = GetProjectionLayer().GetViewMatrix(eye);
+                        // Use Python view matrix (includes Blender viewport offset)
+                        // Check if Python view matrix is valid
+                        const float* pythonViewMatrix = buffer->header.view_matrix;
+                        bool hasPythonMatrix = (pythonViewMatrix[0] != 0.0f || pythonViewMatrix[5] != 0.0f);
+                        
+                        // Get per-eye matrices for IPD offset and projection
+                        const float* localViewMatrix = GetProjectionLayer().GetViewMatrix(eye);
                         const float* projMatrix = GetProjectionLayer().GetProjectionMatrix(eye);
+                        
+                        // Use Python matrix if available, otherwise fall back to local
+                        const float* viewMatrix = hasPythonMatrix ? pythonViewMatrix : localViewMatrix;
                         
                         // Get camera rotation from shared memory header for coordinate alignment
                         const float* cameraRotation = buffer->header.camera_rotation;

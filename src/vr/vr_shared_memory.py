@@ -104,7 +104,8 @@ class SharedMemoryWriter:
     
     def update_matrices(self,
                         view_matrix: np.ndarray,
-                        proj_matrix: np.ndarray):
+                        proj_matrix: np.ndarray,
+                        camera_rotation: Optional[Tuple[float, float, float, float]] = None):
         """
         Update only the view/projection matrices in shared memory header.
         
@@ -114,6 +115,7 @@ class SharedMemoryWriter:
         Args:
             view_matrix: Flat array of 16 floats (column-major)
             proj_matrix: Flat array of 16 floats (column-major)
+            camera_rotation: Camera rotation quaternion (w, x, y, z)
         """
         if not self._mmap:
             return
@@ -145,6 +147,12 @@ class SharedMemoryWriter:
             header_data += struct.pack('<16f', *proj_matrix[:16])
         else:
             header_data += struct.pack('<16f', *([0.0] * 16))
+        
+        # Camera rotation quaternion (4 floats = 16 bytes)
+        if camera_rotation is not None:
+            header_data += struct.pack('<4f', *camera_rotation)
+        else:
+            header_data += struct.pack('<4f', 1.0, 0.0, 0.0, 0.0)  # Identity
         
         self._mmap.seek(0)
         self._mmap.write(header_data)

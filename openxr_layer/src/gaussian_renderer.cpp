@@ -539,34 +539,16 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         return;
     }
     
-    // Use a FIXED world origin offset, computed only once at first render
-    // This ensures stable world-space positioning instead of HMD-relative
-    static bool originSet = false;
-    static float originX = 0, originY = 0, originZ = 0;
-    if (!originSet) {
-        // Set origin to first Gaussian position (where drawing started)
-        originX = gaussians[0].position[0];
-        originY = gaussians[0].position[1];
-        originZ = gaussians[0].position[2];
-        originSet = true;
-    }
+    // NO ORIGIN OFFSET: Use raw Blender world coordinates
+    // The view matrix from xrLocateViews should handle world-to-view transformation
+    // This should place gaussians at their actual controller positions
     
     // Camera Z rotation compensation: Blender VR base pose uses camera as reference
     // Apply inverse of camera Z rotation (roll) in Blender coordinate space BEFORE conversion
-    // We only care about Z rotation since that's what affects the coordinate system alignment
     float cosZ = 1.0f, sinZ = 0.0f;
     if (cameraRotation) {
-        // Extract Z rotation from quaternion (simplified for Z-axis only)
-        // For a Z-rotation quaternion: q = (cos(θ/2), 0, 0, sin(θ/2))
-        // But camera quaternion is general, so we extract yaw angle from it
-        // Using inverse: rotate by negative camera Z
         float w = cameraRotation[0];
-        float x = cameraRotation[1];
-        float y = cameraRotation[2];
         float z = cameraRotation[3];
-        
-        // Apply full inverse rotation for Z component
-        // Simplified: just use the Z rotation component
         float angle = 2.0f * atan2f(z, w);  // Extract Z rotation angle
         cosZ = cosf(-angle);  // Inverse rotation
         sinZ = sinf(-angle);
@@ -580,10 +562,10 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         int base = i * floatsPerInstance;
         const auto& g = gaussians[i];
         
-        // Offset from fixed origin in Blender coordinates
-        float bx = g.position[0] - originX;
-        float by = g.position[1] - originY;
-        float bz = g.position[2] - originZ;
+        // Use raw Blender world coordinates (NO offset)
+        float bx = g.position[0];
+        float by = g.position[1];
+        float bz = g.position[2];
         
         // Apply camera Z rotation compensation (in Blender XY plane)
         float rx = cosZ * bx - sinZ * by;
@@ -591,6 +573,7 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         float rz = bz;  // Z unchanged for Z-rotation
         
         // Convert from Blender (Z-up, Y-forward) to OpenXR (Y-up, -Z forward)
+        // NO additional offset - raw world coordinates
         instanceData[base + 0] = rx;    // Blender X → OpenXR X
         instanceData[base + 1] = rz;    // Blender Z → OpenXR Y (up)
         instanceData[base + 2] = -ry;   // Blender -Y → OpenXR Z (forward)

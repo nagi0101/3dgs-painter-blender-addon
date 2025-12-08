@@ -329,8 +329,8 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         tip_pos, tip_rot = result
         
-        # Always update VR view/projection matrices for head tracking
-        self._update_vr_matrices(context)
+        # NOTE: Matrix updates are now handled by continuous updater in vr_operators.py
+        # Removed self._update_vr_matrices(context) to prevent conflicting updates
         
         # Check if painting (keyboard simulation OR actual VR trigger)
         vr_pressed, vr_pressure = get_paint_button_state(context)
