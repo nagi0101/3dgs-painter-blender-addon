@@ -1,0 +1,42 @@
+﻿msbuild 踰꾩쟾 17.14.23+b0019275e(.NET Framework??
+
+  gaussian_renderer.cpp
+  xr_dispatch.cpp
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(19,78): error C4430: ?뺤떇 吏?뺤옄媛 ?놁뒿?덈떎. int濡?媛?뺥빀?덈떎. 李멸퀬: C++?먯꽌??湲곕낯 int瑜?吏?먰븯吏 ?딆뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(19,91): error C2143: 援щЦ ?ㅻ쪟: ','??媛) '*' ?욎뿉 ?놁뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(22,101): error C2061: 援щЦ ?ㅻ쪟: ?앸퀎??'GLchar' [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(30,71): error C4430: ?뺤떇 吏?뺤옄媛 ?놁뒿?덈떎. int濡?媛?뺥빀?덈떎. 李멸퀬: C++?먯꽌??湲곕낯 int瑜?吏?먰븯吏 ?딆뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(30,84): error C2143: 援щЦ ?ㅻ쪟: ','??媛) '*' ?욎뿉 ?놁뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(40,61): error C2061: 援щЦ ?ㅻ쪟: ?앸퀎??'GLsizeiptr' [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(223,5): error C2197: 'gaussian::PFNGLSHADERSOURCEPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(230,9): error C2197: 'gaussian::PFNGLGETSHADERINFOLOGPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(238,5): error C2197: 'gaussian::PFNGLSHADERSOURCEPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(244,9): error C2197: 'gaussian::PFNGLGETSHADERINFOLOGPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(263,65): error C2664: 'GLint (GLuint,const int)': ?몄닔 2??瑜? 'const char [12]'?먯꽌 'const int'(??濡?蹂?섑븷 ???놁뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(263,65):
+      ??蹂?섏씠 媛?ν븳 而⑦뀓?ㅽ듃媛 ?놁뒿?덈떎.
+  
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(264,65): error C2664: 'GLint (GLuint,const int)': ?몄닔 2??瑜? 'const char [12]'?먯꽌 'const int'(??濡?蹂?섑븷 ???놁뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(264,65):
+      ??蹂?섏씠 媛?ν븳 而⑦뀓?ㅽ듃媛 ?놁뒿?덈떎.
+  
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(297,5): error C2197: 'gaussian::PFNGLBUFFERDATAPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(303,5): error C2197: 'gaussian::PFNGLBUFFERDATAPROC': ?몄텧???몄닔媛 ?덈Т 留롮뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(323,14): error C2065: 'GL_PROGRAM_POINT_SIZE': ?좎뼵?섏? ?딆? ?앸퀎?먯엯?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(351,42): error C2039: 'color_sh0': 'gaussian::GaussianPrimitive'??硫ㅻ쾭媛 ?꾨떃?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\include\gaussian_data.h(18,19):
+      'gaussian::GaussianPrimitive' ?좎뼵??李몄“?섏떗?쒖삤.
+  
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(352,42): error C2039: 'color_sh0': 'gaussian::GaussianPrimitive'??硫ㅻ쾭媛 ?꾨떃?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\include\gaussian_data.h(18,19):
+      'gaussian::GaussianPrimitive' ?좎뼵??李몄“?섏떗?쒖삤.
+  
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(353,42): error C2039: 'color_sh0': 'gaussian::GaussianPrimitive'??硫ㅻ쾭媛 ?꾨떃?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\include\gaussian_data.h(18,19):
+      'gaussian::GaussianPrimitive' ?좎뼵??李몄“?섏떗?쒖삤.
+  
+C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(354,42): error C2039: 'opacity': 'gaussian::GaussianPrimitive'??硫ㅻ쾭媛 ?꾨떃?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
+      C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\include\gaussian_data.h(18,19):
+      'gaussian::GaussianPrimitive' ?좎뼵??李몄“?섏떗?쒖삤.
+  
+  肄붾뱶瑜??앹꽦?섍퀬 ?덉뒿?덈떎...

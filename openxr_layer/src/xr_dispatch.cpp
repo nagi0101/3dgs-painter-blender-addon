@@ -15,6 +15,7 @@
 #include "gaussian_data.h"
 #include "composition_layer.h"
 #include "gpu_context.h"
+#include "gaussian_renderer.h"
 
 #include <iostream>
 #include <fstream>
@@ -202,17 +203,35 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
         // Acquire texture and render
         GLuint texture = GetQuadLayer().BeginRender();
         if (texture != 0) {
-            // Color based on gaussian data availability:
-            // Red   = No data
-            // Green = Data received (1-49 gaussians)
-            // Blue  = Many gaussians (50+)
-            if (g_layerState.gaussian_render_count >= 50) {
-                GetQuadLayer().ClearWithColor(0.0f, 0.0f, 1.0f, 1.0f);  // Blue
-            } else if (g_layerState.gaussian_render_count > 0) {
-                GetQuadLayer().ClearWithColor(0.0f, 1.0f, 0.0f, 1.0f);  // Green
-            } else {
-                GetQuadLayer().ClearWithColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
+            // Initialize GaussianRenderer if needed
+            static bool rendererInitialized = false;
+            if (!rendererInitialized) {
+                if (GetGaussianRenderer().Initialize()) {
+                    rendererInitialized = true;
+                    LogXr("GaussianRenderer initialized");
+                }
             }
+            
+            // Background color based on data state (for debugging)
+            if (g_layerState.gaussian_render_count >= 50) {
+                GetQuadLayer().ClearWithColor(0.0f, 0.0f, 0.3f, 1.0f);  // Dark blue bg
+            } else if (g_layerState.gaussian_render_count > 0) {
+                GetQuadLayer().ClearWithColor(0.0f, 0.3f, 0.0f, 1.0f);  // Dark green bg
+            } else {
+                GetQuadLayer().ClearWithColor(0.3f, 0.0f, 0.0f, 1.0f);  // Dark red bg
+            }
+            
+            // Render Gaussians if we have data
+            if (rendererInitialized && g_sharedMemory.IsOpen() && g_layerState.gaussian_render_count > 0) {
+                const auto* buffer = g_sharedMemory.GetBuffer();
+                if (buffer && buffer->header.gaussian_count > 0) {
+                    GetGaussianRenderer().RenderFromPrimitives(
+                        buffer->gaussians,
+                        buffer->header.gaussian_count
+                    );
+                }
+            }
+            
             GetQuadLayer().EndRender();
             
             // Get our quad layer
