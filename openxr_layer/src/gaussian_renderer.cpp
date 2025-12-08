@@ -333,15 +333,48 @@ void GaussianRenderer::RenderFromPrimitives(
 {
     if (!gaussians || count == 0) return;
     
-    // Extract positions and colors from primitives
+    // First pass: find bounding box
+    float minX = gaussians[0].position[0], maxX = minX;
+    float minY = gaussians[0].position[1], maxY = minY;
+    
+    for (uint32_t i = 1; i < count; i++) {
+        float x = gaussians[i].position[0];
+        float y = gaussians[i].position[1];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+    
+    // Compute center and scale
+    float centerX = (minX + maxX) * 0.5f;
+    float centerY = (minY + maxY) * 0.5f;
+    float rangeX = maxX - minX;
+    float rangeY = maxY - minY;
+    float range = (rangeX > rangeY ? rangeX : rangeY);
+    if (range < 0.001f) range = 1.0f;  // Avoid division by zero
+    
+    // Scale factor: fit into [-0.8, 0.8] with margin
+    float scale = 1.6f / range;
+    
+    // Debug: log first gaussian position
+    static int debugCounter = 0;
+    if (debugCounter++ % 60 == 0) {
+        char buf[256];
+        sprintf(buf, "RenderFromPrimitives: count=%u, bounds=[%.2f,%.2f]-[%.2f,%.2f], scale=%.3f", 
+                count, minX, minY, maxX, maxY, scale);
+        LogRenderer(buf);
+    }
+    
+    // Second pass: extract and normalize positions
     std::vector<float> positions(count * 3);
     std::vector<float> colors(count * 4);
     
     for (uint32_t i = 0; i < count; i++) {
-        // Position - scale to fit in [-1, 1] for simple 2D display
-        positions[i * 3 + 0] = gaussians[i].position[0] * 0.2f;
-        positions[i * 3 + 1] = gaussians[i].position[1] * 0.2f;
-        positions[i * 3 + 2] = gaussians[i].position[2] * 0.2f;
+        // Normalize position to [-0.8, 0.8] centered around bounding box center
+        positions[i * 3 + 0] = (gaussians[i].position[0] - centerX) * scale;
+        positions[i * 3 + 1] = (gaussians[i].position[1] - centerY) * scale;
+        positions[i * 3 + 2] = 0.0f;  // Ignore Z for 2D display
         
         // Color from GaussianPrimitive (R, G, B, A)
         colors[i * 4 + 0] = gaussians[i].color[0];  // R
