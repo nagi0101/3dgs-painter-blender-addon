@@ -2,10 +2,10 @@
 # Copyright (c) 2025 3DGS Painter Project
 
 """
-VR Freehand Paint - Tilt Brush style 3D space painting
+VR Freehand Paint - Integrated with existing painting pipeline
 
-Uses timer polling to track controller position and generate
-Gaussians directly at controller tip without raycasting.
+Uses the same StrokePainter/BrushStamp infrastructure as desktop painting.
+Controller input triggers the same deformation/inpainting features.
 """
 
 import bpy
@@ -14,28 +14,34 @@ from mathutils import Vector, Quaternion, Matrix
 import numpy as np
 from typing import Optional, List, Tuple
 
-# Import VR action binding for B button
+# Import VR action binding for TRIGGER
 from .vr_action_binding import register_paint_action, get_paint_button_state, is_actions_registered
 
+# Import existing painting infrastructure
+from ..operators import get_or_create_paint_session
+from ..viewport.viewport_renderer import GaussianViewportRenderer
 
-class VRFreehandPaintState:
-    """Singleton state manager for VR painting session."""
+
+class VRPaintSession:
+    """Manages VR painting state with existing infrastructure."""
     
-    _instance: Optional["VRFreehandPaintState"] = None
+    _instance: Optional["VRPaintSession"] = None
     
     def __init__(self):
         self.is_painting: bool = False
-        self.stroke_points: List[Tuple[Vector, Quaternion, float]] = []  # (pos, rot, pressure)
         self.last_sample_pos: Optional[Vector] = None
-        self.brush_size: float = 0.05  # meters
-        self.brush_color: Tuple[float, float, float] = (0.0, 0.8, 1.0)  # cyan
         self.spacing: float = 0.02  # meters between samples
-        self.min_gaussians_per_stamp: int = 5
+        
+        # These are set from get_or_create_paint_session()
+        self.scene_data = None
+        self.stroke_painter = None
+        self.brush = None
+        self.viewport_renderer = None
         
     @classmethod
-    def get_instance(cls) -> "VRFreehandPaintState":
+    def get_instance(cls) -> "VRPaintSession":
         if cls._instance is None:
-            cls._instance = VRFreehandPaintState()
+            cls._instance = VRPaintSession()
         return cls._instance
     
     @classmethod
@@ -226,10 +232,10 @@ def pack_gaussians_to_array(gaussians: List[dict]) -> np.ndarray:
 
 class THREEGDS_OT_VRFreehandPaint(Operator):
     """
-    VR Freehand Painting - Timer polling based
+    VR Freehand Painting - Uses existing StrokePainter/BrushStamp
     
     Paint in 3D space using VR controller as a pen.
-    Uses timer to continuously sample controller position.
+    Integrates with the desktop painting pipeline for consistent results.
     """
     bl_idname = "threegds.vr_freehand_paint"
     bl_label = "VR Freehand Paint"
@@ -239,9 +245,8 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
     # Timer handle
     _timer = None
     
-    # Paint state
-    _state: Optional[VRFreehandPaintState] = None
-    _accumulated_gaussians: List[dict] = []
+    # Paint session
+    _session: Optional[VRPaintSession] = None
     
     # Keyboard trigger simulation (for testing)
     _keyboard_triggered: bool = False
@@ -254,9 +259,25 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
     
     def invoke(self, context, event):
         """Start the VR painting modal operator."""
-        self._state = VRFreehandPaintState.get_instance()
-        self._accumulated_gaussians = []
+        # Initialize session with existing infrastructure
+        self._session = VRPaintSession.get_instance()
         self._keyboard_triggered = False
+        
+        # Get paint session from main operators.py (same as desktop)
+        try:
+            paint_session = get_or_create_paint_session(context)
+            self._session.scene_data = paint_session['scene_data']
+            self._session.stroke_painter = paint_session['stroke_painter']
+            self._session.brush = paint_session['brush']
+            print("[VR Paint] Using existing painting infrastructure")
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to initialize paint session: {e}")
+            return {'CANCELLED'}
+        
+        # Get viewport renderer
+        self._session.viewport_renderer = GaussianViewportRenderer.get_instance()
+        if not self._session.viewport_renderer.enabled:
+            self._session.viewport_renderer.register()
         
         # Register VR TRIGGER action binding
         if not is_actions_registered():
@@ -271,7 +292,7 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         wm.modal_handler_add(self)
         
-        self.report({'INFO'}, "VR Freehand Paint started - Hold SPACE to paint, ESC to exit")
+        self.report({'INFO'}, "VR Freehand Paint started - Hold TRIGGER to paint, ESC to exit")
         return {'RUNNING_MODAL'}
     
     def modal(self, context, event):
@@ -311,14 +332,14 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         # Always update VR view/projection matrices for head tracking
         self._update_vr_matrices(context)
         
-        # Check if painting (keyboard simulation OR actual VR B button)
+        # Check if painting (keyboard simulation OR actual VR trigger)
         vr_pressed, vr_pressure = get_paint_button_state(context)
         is_painting = self._keyboard_triggered or vr_pressed
         
         # Auto-manage stroke state based on trigger
-        if is_painting and not self._state.is_painting:
-            self._start_stroke()
-        elif not is_painting and self._state.is_painting and not self._keyboard_triggered:
+        if is_painting and not self._session.is_painting:
+            self._start_stroke(context)
+        elif not is_painting and self._session.is_painting and not self._keyboard_triggered:
             self._end_stroke(context)
         
         if is_painting:
@@ -327,94 +348,98 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         # Always update brush preview position
         self._update_preview(context, tip_pos, tip_rot)
     
-    def _start_stroke(self):
-        """Initialize a new stroke."""
-        self._state.is_painting = True
-        self._state.stroke_points = []
-        self._state.last_sample_pos = None
-        print("[VR Paint] Stroke started")
-    
-    def _continue_stroke(self, context, position: Vector, rotation: Quaternion):
-        """Add a point to the current stroke if spacing threshold met."""
+    def _start_stroke(self, context):
+        """Initialize a new stroke using StrokePainter."""
+        scene = context.scene
         
-        if not self._state.is_painting:
-            return
-        
-        # Check spacing threshold
-        if self._state.last_sample_pos is not None:
-            dist = (position - self._state.last_sample_pos).length
-            if dist < self._state.spacing:
-                return  # Too close, skip this sample
-        
-        # Record point
-        self._state.stroke_points.append((position.copy(), rotation.copy(), 1.0))
-        self._state.last_sample_pos = position.copy()
-        
-        # Generate gaussians at this point
-        gaussians = generate_gaussians_at_point(
-            position=position,
-            rotation=rotation,
-            size=self._state.brush_size,
-            color=self._state.brush_color,
-            count=self._state.min_gaussians_per_stamp
+        # Apply brush settings from UI panels
+        self._session.brush.apply_parameters(
+            color=np.array(scene.npr_brush_color, dtype=np.float32),
+            size_multiplier=scene.npr_brush_size,
+            global_opacity=scene.npr_brush_opacity
         )
         
-        self._accumulated_gaussians.extend(gaussians)
+        self._session.is_painting = True
+        self._session.last_sample_pos = None
         
-        # Sync to viewport immediately
+        print(f"[VR Paint] Stroke started (size={scene.npr_brush_size:.3f}, color={scene.npr_brush_color[:]})")
+    
+    def _continue_stroke(self, context, position: Vector, rotation: Quaternion):
+        """Add a point to the current stroke using StrokePainter."""
+        
+        if not self._session.is_painting:
+            return
+        
+        scene = context.scene
+        
+        # Check spacing threshold
+        if self._session.last_sample_pos is not None:
+            dist = (position - self._session.last_sample_pos).length
+            if dist < self._session.spacing:
+                return  # Too close, skip this sample
+        
+        # Convert to numpy arrays
+        pos_np = np.array(position, dtype=np.float32)
+        
+        # Get normal from controller orientation (up direction)
+        normal_vec = rotation @ Vector((0, 1, 0))
+        normal_np = np.array(normal_vec, dtype=np.float32)
+        
+        # First point: start stroke
+        if self._session.last_sample_pos is None:
+            self._session.stroke_painter.start_stroke(
+                position=pos_np,
+                normal=normal_np,
+                enable_deformation=scene.npr_enable_deformation
+            )
+        else:
+            # Update stroke with new point
+            self._session.stroke_painter.update_stroke(
+                position=pos_np,
+                normal=normal_np
+            )
+        
+        self._session.last_sample_pos = position.copy()
+        
+        # Sync to viewport
         self._sync_to_viewport(context)
         
-        print(f"[VR Paint] Point added at {position}, total gaussians: {len(self._accumulated_gaussians)}")
+        gauss_count = len(self._session.scene_data)
+        print(f"[VR Paint] Point added at {position}, total: {gauss_count}")
     
     def _end_stroke(self, context):
-        """Finish the current stroke."""
-        self._state.is_painting = False
+        """Finish the current stroke with deformation."""
+        scene = context.scene
         
-        point_count = len(self._state.stroke_points)
-        gauss_count = len(self._accumulated_gaussians)
+        self._session.is_painting = False
         
-        print(f"[VR Paint] Stroke ended: {point_count} points, {gauss_count} gaussians")
+        # Finish stroke (applies deformation if enabled)
+        self._session.stroke_painter.finish_stroke(
+            enable_deformation=scene.npr_enable_deformation,
+            enable_inpainting=False  # Can enable later
+        )
+        
+        gauss_count = len(self._session.scene_data)
+        print(f"[VR Paint] Stroke ended, total gaussians: {gauss_count}")
         
         # Final sync
         self._sync_to_viewport(context)
     
     def _sync_to_viewport(self, context):
-        """Sync accumulated gaussians to both PC viewport and VR mesh objects."""
-        if not self._accumulated_gaussians:
+        """Sync SceneData to viewport renderer."""
+        if self._session.scene_data is None or len(self._session.scene_data) == 0:
             return
         
-        # ============================================================
-        # 1. Sync to PC Viewport (draw handler - only visible on PC)
-        # ============================================================
         try:
-            from ..viewport.viewport_renderer import GaussianViewportRenderer
+            # Use existing viewport renderer with actual SceneData
+            renderer = self._session.viewport_renderer
             
-            renderer = GaussianViewportRenderer.get_instance()
-            
-            if not renderer.enabled:
-                renderer.register()
-            
-            packed_data = pack_gaussians_to_array(self._accumulated_gaussians)
-            
-            class MockSceneData:
-                def __init__(self, data):
-                    n = data.shape[0]
-                    self.count = n
-                    self.positions = data[:, 0:3]
-                    self.rotations = np.zeros((n, 4), dtype=np.float32)
-                    self.rotations[:, 0:3] = data[:, 4:7]
-                    self.rotations[:, 3] = data[:, 3]
-                    self.scales = data[:, 7:10]
-                    self.opacities = data[:, 10]
-                    SH_C0 = 0.28209479177387814
-                    self.colors = data[:, 11:14] * SH_C0 + 0.5
-            
-            mock_scene = MockSceneData(packed_data)
-            renderer.update_gaussians(scene_data=mock_scene)
-            renderer.request_redraw()
-            
+            if renderer and renderer.enabled:
+                renderer.update_gaussians(scene_data=self._session.scene_data)
+                renderer.request_redraw()
+                
         except Exception as e:
-            print(f"[VR Paint] PC viewport sync error: {e}")
+            print(f"[VR Paint] Viewport sync error: {e}")
         
         # ============================================================
         # 2. VR Offscreen Renderer (Phase 1 - visible in VR headset!)
