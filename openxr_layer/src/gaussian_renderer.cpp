@@ -54,7 +54,9 @@ typedef void (APIENTRY *PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
 #define GL_LINK_STATUS 0x8B82
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_DYNAMIC_DRAW 0x88E8
+#define GL_STATIC_DRAW 0x88E4
 #define GL_PROGRAM_POINT_SIZE 0x8642
+#define GL_TRIANGLES 0x0004
 
 // Function pointers
 static PFNGLCREATESHADERPROC pfn_glCreateShader = nullptr;
@@ -137,50 +139,169 @@ static bool LoadRendererExtensions() {
 }
 
 // ============================================
-// GLSL Shaders - Simple point rendering
+// GLSL Shaders - Full Gaussian Splatting
 // ============================================
 static const char* VERTEX_SHADER = R"(
 #version 330 core
-layout(location = 0) in vec3 aPosition;
-layout(location = 1) in vec4 aColor;
+
+// Per-vertex: billboard quad corner (0-3)
+layout(location = 0) in vec2 aQuadPos;  // [-1,1] x [-1,1]
+
+// Per-instance: gaussian data
+layout(location = 1) in vec3 aPosition;    // World position
+layout(location = 2) in vec4 aRotation;    // Quaternion (w,x,y,z)
+layout(location = 3) in vec3 aScale;       // Scale (x,y,z)
+layout(location = 4) in vec4 aColor;       // RGBA
 
 uniform mat4 uViewMatrix;
 uniform mat4 uProjMatrix;
-uniform bool uUseMatrices;
+uniform vec2 uViewport;      // Viewport size in pixels
+uniform vec2 uFocal;         // Focal lengths (fx, fy)
 
 out vec4 vColor;
+out vec3 vConic;     // Inverse 2D covariance (a, b, c)
+out vec2 vCoordXY;   // Offset from center in pixels
+
+// Quaternion to rotation matrix (column-major)
+mat3 quatToMat(vec4 q) {
+    float w = q.x, x = q.y, y = q.z, z = q.w;
+    
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    float wx = w*x, wy = w*y, wz = w*z;
+    
+    return mat3(
+        1.0 - 2.0*(yy + zz), 2.0*(xy + wz), 2.0*(xz - wy),
+        2.0*(xy - wz), 1.0 - 2.0*(xx + zz), 2.0*(yz + wx),
+        2.0*(xz + wy), 2.0*(yz - wx), 1.0 - 2.0*(xx + yy)
+    );
+}
+
+// Compute 3D covariance from scale and rotation
+mat3 computeCov3D(vec3 scale, vec4 rot) {
+    mat3 R = quatToMat(rot);
+    mat3 S = mat3(scale.x, 0.0, 0.0,
+                  0.0, scale.y, 0.0,
+                  0.0, 0.0, scale.z);
+    mat3 RS = R * S;
+    return RS * transpose(RS);
+}
+
+// Project 3D covariance to 2D using Jacobian
+vec3 computeCov2D(vec3 posView, mat3 cov3D, vec2 focal) {
+    float z = posView.z;
+    float z2 = z * z;
+    
+    // Jacobian of perspective projection (column-major)
+    mat3 J = mat3(
+        focal.x / z, 0.0, 0.0,
+        0.0, focal.y / z, 0.0,
+        -focal.x * posView.x / z2, -focal.y * posView.y / z2, 0.0
+    );
+    
+    mat3 cov2D = J * cov3D * transpose(J);
+    
+    // Anti-aliasing filter
+    cov2D[0][0] += 0.3;
+    cov2D[1][1] += 0.3;
+    
+    return vec3(cov2D[0][0], cov2D[0][1], cov2D[1][1]);
+}
 
 void main() {
-    if (uUseMatrices) {
-        // Apply view/projection for 3D rendering
-        vec4 viewPos = uViewMatrix * vec4(aPosition, 1.0);
-        vec4 clipPos = uProjMatrix * viewPos;
-        gl_Position = clipPos;
-        // Scale point size based on distance
-        float dist = length(viewPos.xyz);
-        gl_PointSize = max(3.0, 30.0 / dist);
-    } else {
-        // Fallback: simple 2D projection
-        gl_Position = vec4(aPosition.xy, 0.0, 1.0);
-        gl_PointSize = 10.0;
+    // Transform to clip space
+    vec4 posClip = uProjMatrix * uViewMatrix * vec4(aPosition, 1.0);
+    
+    // Early frustum culling
+    if (posClip.w <= 0.0 || abs(posClip.x/posClip.w) > 1.3 || abs(posClip.y/posClip.w) > 1.3) {
+        gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
+        return;
     }
+    
+    // Compute view-space position
+    vec4 posViewFull = uViewMatrix * vec4(aPosition, 1.0);
+    vec3 posView = posViewFull.xyz;
+    
+    // Compute 3D covariance in world space
+    mat3 cov3D_world = computeCov3D(aScale, aRotation);
+    
+    // Transform to view space
+    mat3 V = mat3(uViewMatrix);
+    mat3 cov3D_view = V * cov3D_world * transpose(V);
+    
+    // Project to 2D
+    vec3 cov2D = computeCov2D(posView, cov3D_view, uFocal);
+    
+    // Compute inverse covariance (conic)
+    float det = cov2D.x * cov2D.z - cov2D.y * cov2D.y;
+    if (det <= 0.0) {
+        gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
+        return;
+    }
+    float detInv = 1.0 / det;
+    vec3 conic = vec3(cov2D.z * detInv, -cov2D.y * detInv, cov2D.x * detInv);
+    
+    // Compute quad extent (3-sigma)
+    float maxRadius = 3.0 * sqrt(max(cov2D.x, cov2D.z));
+    maxRadius = clamp(maxRadius, 1.0, 500.0);
+    
+    // Billboard quad in NDC
+    vec2 quadExtentNDC = vec2(maxRadius) / uViewport * 2.0;
+    posClip.xy += aQuadPos * quadExtentNDC * posClip.w;
+    
+    gl_Position = posClip;
+    
     vColor = aColor;
+    vConic = conic;
+    vCoordXY = aQuadPos * maxRadius;
 }
 )";
 
 static const char* FRAGMENT_SHADER = R"(
 #version 330 core
+
 in vec4 vColor;
+in vec3 vConic;
+in vec2 vCoordXY;
+
 out vec4 fragColor;
 
 void main() {
-    // Soft circular point
-    vec2 coord = gl_PointCoord - 0.5;
-    float dist = length(coord);
-    float alpha = smoothstep(0.5, 0.3, dist);
-    fragColor = vec4(vColor.rgb, vColor.a * alpha);
+    // Evaluate 2D Gaussian: exp(-0.5 * x^T * conic * x)
+    float power = -0.5 * (
+        vConic.x * vCoordXY.x * vCoordXY.x +
+        vConic.z * vCoordXY.y * vCoordXY.y +
+        2.0 * vConic.y * vCoordXY.x * vCoordXY.y
+    );
+    
+    // Discard if outside 3-sigma
+    if (power > 0.0) {
+        discard;
+    }
+    
+    float alpha = vColor.a * exp(power);
+    
+    // Discard nearly transparent
+    if (alpha < 0.004) {
+        discard;
+    }
+    
+    alpha = min(alpha, 0.99);
+    
+    fragColor = vec4(vColor.rgb * alpha, alpha);
 }
 )";
+
+// ============================================
+// GL Extension for instanced rendering
+// ============================================
+typedef void (APIENTRY *PFNGLVERTEXATTRIBDIVISORPROC)(GLuint index, GLuint divisor);
+typedef void (APIENTRY *PFNGLDRAWARRAYSINSTANCEDPROC)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
+typedef void (APIENTRY *PFNGLUNIFORM2FPROC)(GLint location, GLfloat v0, GLfloat v1);
+
+static PFNGLVERTEXATTRIBDIVISORPROC pfn_glVertexAttribDivisor = nullptr;
+static PFNGLDRAWARRAYSINSTANCEDPROC pfn_glDrawArraysInstanced = nullptr;
+static PFNGLUNIFORM2FPROC pfn_glUniform2f = nullptr;
 
 // ============================================
 // Global Instance
@@ -203,11 +324,23 @@ GaussianRenderer::~GaussianRenderer() {
 bool GaussianRenderer::Initialize() {
     if (m_initialized) return true;
     
-    LogRenderer("Initializing...");
+    LogRenderer("Initializing (Full Gaussian Splatting)...");
     
     if (!LoadRendererExtensions()) {
         LogRenderer("Failed to load GL extensions");
         return false;
+    }
+    
+    // Load additional extensions for instancing
+    HMODULE hGL = GetModuleHandleA("opengl32.dll");
+    if (hGL) {
+        typedef PROC (WINAPI *PFNWGLGETPROCADDRESSPROC)(LPCSTR);
+        auto wglGetProcAddress = (PFNWGLGETPROCADDRESSPROC)GetProcAddress(hGL, "wglGetProcAddress");
+        if (wglGetProcAddress) {
+            pfn_glVertexAttribDivisor = (PFNGLVERTEXATTRIBDIVISORPROC)wglGetProcAddress("glVertexAttribDivisor");
+            pfn_glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddress("glDrawArraysInstanced");
+            pfn_glUniform2f = (PFNGLUNIFORM2FPROC)wglGetProcAddress("glUniform2f");
+        }
     }
     
     if (!CreateShader()) {
@@ -221,7 +354,7 @@ bool GaussianRenderer::Initialize() {
     }
     
     m_initialized = true;
-    LogRenderer("Initialized successfully");
+    LogRenderer("Initialized successfully (Full Splatting)");
     return true;
 }
 
@@ -235,8 +368,8 @@ void GaussianRenderer::Shutdown() {
         pfn_glDeleteVertexArrays(1, &m_vao);
     }
     if (pfn_glDeleteBuffers) {
-        if (m_positionBuffer) pfn_glDeleteBuffers(1, &m_positionBuffer);
-        if (m_colorBuffer) pfn_glDeleteBuffers(1, &m_colorBuffer);
+        if (m_quadBuffer) pfn_glDeleteBuffers(1, &m_quadBuffer);
+        if (m_instanceBuffer) pfn_glDeleteBuffers(1, &m_instanceBuffer);
     }
     
     m_initialized = false;
@@ -251,8 +384,8 @@ bool GaussianRenderer::CreateShader() {
     GLint success;
     pfn_glGetShaderiv(m_vertexShader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        char log[512];
-        pfn_glGetShaderInfoLog(m_vertexShader, 512, nullptr, log);
+        char log[1024];
+        pfn_glGetShaderInfoLog(m_vertexShader, 1024, nullptr, log);
         LogRenderer("Vertex shader error:");
         LogRenderer(log);
         return false;
@@ -265,8 +398,8 @@ bool GaussianRenderer::CreateShader() {
     
     pfn_glGetShaderiv(m_fragmentShader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        char log[512];
-        pfn_glGetShaderInfoLog(m_fragmentShader, 512, nullptr, log);
+        char log[1024];
+        pfn_glGetShaderInfoLog(m_fragmentShader, 1024, nullptr, log);
         LogRenderer("Fragment shader error:");
         LogRenderer(log);
         return false;
@@ -280,86 +413,57 @@ bool GaussianRenderer::CreateShader() {
     
     pfn_glGetProgramiv(m_shaderProgram, GL_LINK_STATUS, &success);
     if (!success) {
-        LogRenderer("Shader link error");
+        char log[1024];
+        pfn_glGetShaderInfoLog(m_shaderProgram, 1024, nullptr, log);
+        LogRenderer("Shader link error:");
+        LogRenderer(log);
         return false;
     }
     
     // Get uniform locations
     m_viewMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uViewMatrix");
     m_projMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uProjMatrix");
-    m_useMatricesLoc = pfn_glGetUniformLocation(m_shaderProgram, "uUseMatrices");
+    m_viewportLoc = pfn_glGetUniformLocation(m_shaderProgram, "uViewport");
+    m_focalLoc = pfn_glGetUniformLocation(m_shaderProgram, "uFocal");
     
     // Delete shaders (now linked)
     pfn_glDeleteShader(m_vertexShader);
     pfn_glDeleteShader(m_fragmentShader);
     
-    LogRenderer("Shader created");
+    LogRenderer("Shader created (Full Splatting)");
     return true;
 }
 
 bool GaussianRenderer::CreateBuffers() {
     pfn_glGenVertexArrays(1, &m_vao);
-    pfn_glGenBuffers(1, &m_positionBuffer);
-    pfn_glGenBuffers(1, &m_colorBuffer);
-    
-    LogRenderer("Buffers created");
-    return true;
-}
-
-void GaussianRenderer::Render(
-    const float* positions,
-    const float* colors,
-    uint32_t count,
-    const float* viewMatrix,
-    const float* projMatrix)
-{
-    if (!m_initialized || count == 0) return;
-    
-    // Bind VAO
     pfn_glBindVertexArray(m_vao);
     
-    // Upload positions
-    pfn_glBindBuffer(GL_ARRAY_BUFFER, m_positionBuffer);
-    pfn_glBufferData(GL_ARRAY_BUFFER, count * 3 * sizeof(float), positions, GL_DYNAMIC_DRAW);
-    pfn_glVertexAttribPointer(0, 3, GL_FLOAT, 0, 0, nullptr);
+    // Billboard quad vertices (6 vertices = 2 triangles)
+    // Each vertex is vec2 in [-1, 1] range
+    static const float quadVertices[] = {
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+         1.0f,  1.0f,
+        -1.0f, -1.0f,
+         1.0f,  1.0f,
+        -1.0f,  1.0f
+    };
+    
+    pfn_glGenBuffers(1, &m_quadBuffer);
+    pfn_glBindBuffer(GL_ARRAY_BUFFER, m_quadBuffer);
+    pfn_glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+    
+    // Location 0: quad position (per-vertex)
+    pfn_glVertexAttribPointer(0, 2, GL_FLOAT, 0, 2 * sizeof(float), nullptr);
     pfn_glEnableVertexAttribArray(0);
     
-    // Upload colors
-    pfn_glBindBuffer(GL_ARRAY_BUFFER, m_colorBuffer);
-    pfn_glBufferData(GL_ARRAY_BUFFER, count * 4 * sizeof(float), colors, GL_DYNAMIC_DRAW);
-    pfn_glVertexAttribPointer(1, 4, GL_FLOAT, 0, 0, nullptr);
-    pfn_glEnableVertexAttribArray(1);
+    // Instance buffer (per-gaussian data)
+    pfn_glGenBuffers(1, &m_instanceBuffer);
     
-    // Use shader
-    pfn_glUseProgram(m_shaderProgram);
-    
-    // Upload matrices if available
-    bool useMatrices = (viewMatrix != nullptr && projMatrix != nullptr);
-    if (pfn_glUniform1i && m_useMatricesLoc >= 0) {
-        pfn_glUniform1i(m_useMatricesLoc, useMatrices ? 1 : 0);
-    }
-    if (useMatrices && pfn_glUniformMatrix4fv) {
-        if (m_viewMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, viewMatrix);
-        }
-        if (m_projMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_projMatrixLoc, 1, 0, projMatrix);
-        }
-    }
-    
-    // Enable blending
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
-    // Enable point size
-    glEnable(GL_PROGRAM_POINT_SIZE);
-    
-    // Draw points
-    glDrawArrays(GL_POINTS, 0, count);
-    
-    // Cleanup
     pfn_glBindVertexArray(0);
-    pfn_glUseProgram(0);
+    
+    LogRenderer("Buffers created (instanced quads)");
+    return true;
 }
 
 void GaussianRenderer::RenderFromPrimitives(
@@ -367,96 +471,145 @@ void GaussianRenderer::RenderFromPrimitives(
     uint32_t count,
     const SharedMemoryHeader* header)
 {
-    if (!gaussians || count == 0) return;
+    if (!m_initialized || !gaussians || count == 0) return;
     
-    // Debug: Log entry
+    // Debug logging
     static int debugCounter = 0;
     if (debugCounter++ % 60 == 0) {
         char buf[256];
-        sprintf(buf, "RenderFromPrimitives called: count=%u, header=%s", 
-                count, header ? "yes" : "no");
+        sprintf(buf, "RenderFromPrimitives (splatting): count=%u", count);
         LogRenderer(buf);
     }
     
-    // Check if we have valid view/proj matrices
+    // Check for valid matrices
     bool hasMatrices = false;
-    const float* viewMatrix = nullptr;
-    const float* projMatrix = nullptr;
-    
     if (header) {
-        // Check if matrices are non-zero
-        bool viewNonZero = false;
-        bool projNonZero = false;
         for (int i = 0; i < 16; i++) {
-            if (header->view_matrix[i] != 0.0f) viewNonZero = true;
-            if (header->proj_matrix[i] != 0.0f) projNonZero = true;
-        }
-        hasMatrices = viewNonZero && projNonZero;
-        
-        if (hasMatrices) {
-            viewMatrix = header->view_matrix;
-            projMatrix = header->proj_matrix;
+            if (header->view_matrix[i] != 0.0f || header->proj_matrix[i] != 0.0f) {
+                hasMatrices = true;
+                break;
+            }
         }
     }
     
-    std::vector<float> positions(count * 3);
-    std::vector<float> colors(count * 4);
+    if (!hasMatrices) {
+        // Fallback: can't render without matrices in splatting mode
+        static int warnCounter = 0;
+        if (warnCounter++ % 60 == 0) {
+            LogRenderer("Warning: No view/proj matrices, skipping splat render");
+        }
+        return;
+    }
     
-    if (hasMatrices) {
-        // Use raw world positions - shader will apply view/proj matrices
-        for (uint32_t i = 0; i < count; i++) {
-            positions[i * 3 + 0] = gaussians[i].position[0];
-            positions[i * 3 + 1] = gaussians[i].position[1];
-            positions[i * 3 + 2] = gaussians[i].position[2];
-            
-            colors[i * 4 + 0] = gaussians[i].color[0];
-            colors[i * 4 + 1] = gaussians[i].color[1];
-            colors[i * 4 + 2] = gaussians[i].color[2];
-            colors[i * 4 + 3] = gaussians[i].color[3];
+    // Prepare instance data: [position(3) + rotation(4) + scale(3) + color(4)] = 14 floats per gaussian
+    const int floatsPerInstance = 14;
+    std::vector<float> instanceData(count * floatsPerInstance);
+    
+    for (uint32_t i = 0; i < count; i++) {
+        int base = i * floatsPerInstance;
+        const auto& g = gaussians[i];
+        
+        // Position (3)
+        instanceData[base + 0] = g.position[0];
+        instanceData[base + 1] = g.position[1];
+        instanceData[base + 2] = g.position[2];
+        
+        // Rotation quaternion (4) - w, x, y, z
+        instanceData[base + 3] = g.rotation[0];  // w
+        instanceData[base + 4] = g.rotation[1];  // x
+        instanceData[base + 5] = g.rotation[2];  // y
+        instanceData[base + 6] = g.rotation[3];  // z
+        
+        // Scale (3)
+        instanceData[base + 7] = g.scale[0];
+        instanceData[base + 8] = g.scale[1];
+        instanceData[base + 9] = g.scale[2];
+        
+        // Color (4)
+        instanceData[base + 10] = g.color[0];
+        instanceData[base + 11] = g.color[1];
+        instanceData[base + 12] = g.color[2];
+        instanceData[base + 13] = g.color[3];
+    }
+    
+    // Bind VAO
+    pfn_glBindVertexArray(m_vao);
+    
+    // Upload instance data
+    pfn_glBindBuffer(GL_ARRAY_BUFFER, m_instanceBuffer);
+    pfn_glBufferData(GL_ARRAY_BUFFER, instanceData.size() * sizeof(float), instanceData.data(), GL_DYNAMIC_DRAW);
+    
+    // Setup instance attributes
+    const int stride = floatsPerInstance * sizeof(float);
+    
+    // Location 1: position (3 floats)
+    pfn_glVertexAttribPointer(1, 3, GL_FLOAT, 0, stride, (void*)(0 * sizeof(float)));
+    pfn_glEnableVertexAttribArray(1);
+    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(1, 1);
+    
+    // Location 2: rotation (4 floats)
+    pfn_glVertexAttribPointer(2, 4, GL_FLOAT, 0, stride, (void*)(3 * sizeof(float)));
+    pfn_glEnableVertexAttribArray(2);
+    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(2, 1);
+    
+    // Location 3: scale (3 floats)
+    pfn_glVertexAttribPointer(3, 3, GL_FLOAT, 0, stride, (void*)(7 * sizeof(float)));
+    pfn_glEnableVertexAttribArray(3);
+    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(3, 1);
+    
+    // Location 4: color (4 floats)
+    pfn_glVertexAttribPointer(4, 4, GL_FLOAT, 0, stride, (void*)(10 * sizeof(float)));
+    pfn_glEnableVertexAttribArray(4);
+    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(4, 1);
+    
+    // Use shader
+    pfn_glUseProgram(m_shaderProgram);
+    
+    // Upload uniforms
+    if (pfn_glUniformMatrix4fv) {
+        if (m_viewMatrixLoc >= 0) {
+            pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, header->view_matrix);
         }
-        
-        static int debugCounter = 0;
-        if (debugCounter++ % 60 == 0) {
-            LogRenderer("Using 3D projection with view/proj matrices");
-        }
-    } else {
-        // Fallback: bounding box normalization for 2D display
-        float minX = gaussians[0].position[0], maxX = minX;
-        float minY = gaussians[0].position[1], maxY = minY;
-        
-        for (uint32_t i = 1; i < count; i++) {
-            float x = gaussians[i].position[0];
-            float y = gaussians[i].position[1];
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-        }
-        
-        float centerX = (minX + maxX) * 0.5f;
-        float centerY = (minY + maxY) * 0.5f;
-        float range = (std::max)(maxX - minX, maxY - minY);
-        if (range < 0.001f) range = 1.0f;
-        float scale = 1.6f / range;
-        
-        for (uint32_t i = 0; i < count; i++) {
-            positions[i * 3 + 0] = (gaussians[i].position[0] - centerX) * scale;
-            positions[i * 3 + 1] = (gaussians[i].position[1] - centerY) * scale;
-            positions[i * 3 + 2] = 0.0f;
-            
-            colors[i * 4 + 0] = gaussians[i].color[0];
-            colors[i * 4 + 1] = gaussians[i].color[1];
-            colors[i * 4 + 2] = gaussians[i].color[2];
-            colors[i * 4 + 3] = gaussians[i].color[3];
-        }
-        
-        static int debugCounter = 0;
-        if (debugCounter++ % 60 == 0) {
-            LogRenderer("Using 2D bounding box normalization (no matrices)");
+        if (m_projMatrixLoc >= 0) {
+            pfn_glUniformMatrix4fv(m_projMatrixLoc, 1, 0, header->proj_matrix);
         }
     }
     
-    Render(positions.data(), colors.data(), count, viewMatrix, projMatrix);
+    // Viewport and focal length from projection matrix
+    // Standard VR viewport is 1024x1024 (our quad texture size)
+    float viewportW = 1024.0f;
+    float viewportH = 1024.0f;
+    
+    // Extract focal lengths from projection matrix
+    // P[0][0] = 2*fx/width, P[1][1] = 2*fy/height
+    float focalX = header->proj_matrix[0] * viewportW * 0.5f;
+    float focalY = header->proj_matrix[5] * viewportH * 0.5f;
+    
+    if (pfn_glUniform2f) {
+        if (m_viewportLoc >= 0) {
+            pfn_glUniform2f(m_viewportLoc, viewportW, viewportH);
+        }
+        if (m_focalLoc >= 0) {
+            pfn_glUniform2f(m_focalLoc, focalX, focalY);
+        }
+    }
+    
+    // Enable blending for proper alpha compositing
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // Premultiplied alpha
+    
+    // Disable depth test for painterly overlapping
+    glDisable(GL_DEPTH_TEST);
+    
+    // Draw instanced quads
+    if (pfn_glDrawArraysInstanced) {
+        pfn_glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+    }
+    
+    // Cleanup
+    pfn_glBindVertexArray(0);
+    pfn_glUseProgram(0);
 }
 
 }  // namespace gaussian
+
