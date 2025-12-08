@@ -14,6 +14,9 @@ from mathutils import Vector, Quaternion, Matrix
 import numpy as np
 from typing import Optional, List, Tuple
 
+# Import VR action binding for B button
+from .vr_action_binding import register_paint_action, get_paint_button_state, is_actions_registered
+
 
 class VRFreehandPaintState:
     """Singleton state manager for VR painting session."""
@@ -255,6 +258,13 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         self._accumulated_gaussians = []
         self._keyboard_triggered = False
         
+        # Register VR B button action binding
+        if not is_actions_registered():
+            if register_paint_action(context):
+                print("[VR Paint] B button action registered successfully")
+            else:
+                print("[VR Paint] B button action registration failed, SPACE key fallback available")
+        
         # Add timer for continuous polling (10ms = 100Hz)
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.01, window=context.window)
@@ -302,7 +312,7 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         self._update_vr_matrices(context)
         
         # Check if painting (keyboard simulation OR actual VR B button)
-        vr_pressed, vr_pressure = is_b_button_pressed(context, hand_index=1)
+        vr_pressed, vr_pressure = get_paint_button_state(context)
         is_painting = self._keyboard_triggered or vr_pressed
         
         # Auto-manage stroke state based on trigger
