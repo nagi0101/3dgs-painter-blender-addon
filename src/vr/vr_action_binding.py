@@ -12,8 +12,8 @@ import bpy
 from typing import Tuple, Optional, List
 
 # Action set and action names
-ACTION_SET_NAME = "3dgs_paint"
-PAINT_ACTION_NAME = "paint_button"
+ACTION_SET_NAME = "blender_default"  # Use existing blender_default actionmap
+PAINT_ACTION_NAME = "threegds_paint"  # This is already registered with /input/b/click!
 B_BUTTON_PATH = "/user/hand/right/input/b/click"
 
 # Touch controller profile (Quest 2/3, Rift S)

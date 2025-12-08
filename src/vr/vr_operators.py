@@ -35,6 +35,10 @@ class THREEGDS_OT_VRPaintStroke(Operator):
     
     def invoke(self, context, event):
         """Called when B button is pressed."""
+        # DEBUG: Always print to verify this operator is being called
+        print(f"[VR Paint] ====== vr_paint_stroke INVOKE CALLED! ======")
+        print(f"[VR Paint] Event type: {event.type}, value: {event.value}")
+        
         from ..operators import get_or_create_paint_session
         from ..viewport.viewport_renderer import GaussianViewportRenderer
         
