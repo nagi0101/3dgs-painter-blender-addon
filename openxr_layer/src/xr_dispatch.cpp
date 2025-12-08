@@ -202,8 +202,8 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
         // Acquire texture and render simple color (test)
         GLuint texture = GetQuadLayer().BeginRender();
         if (texture != 0) {
-            // TODO: Render Gaussians here
-            // For now, we just release (texture will show whatever was there)
+            // Render bright red for visibility test
+            GetQuadLayer().ClearWithColor(1.0f, 0.0f, 0.0f, 1.0f);  // Bright red
             GetQuadLayer().EndRender();
             
             // Get our quad layer

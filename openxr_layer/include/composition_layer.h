@@ -88,10 +88,17 @@ public:
      */
     void SetSize(float width, float height);
 
+    /**
+     * Clear the current texture with a solid color
+     * Call this between BeginRender() and EndRender()
+     */
+    void ClearWithColor(float r, float g, float b, float a);
+
 private:
     bool LoadOpenXRFunctions();
     bool CreateSwapchain(uint32_t width, uint32_t height);
     bool CreateReferenceSpace();
+    bool CreateFBO();
     
     XrInstance m_instance = XR_NULL_HANDLE;
     XrSession m_session = XR_NULL_HANDLE;
@@ -103,6 +110,9 @@ private:
     uint32_t m_currentImageIndex = 0;
     uint32_t m_width = 512;
     uint32_t m_height = 512;
+    
+    // OpenGL FBO for rendering
+    GLuint m_fbo = 0;
     
     // Quad layer configuration
     XrCompositionLayerQuad m_quadLayer = {};

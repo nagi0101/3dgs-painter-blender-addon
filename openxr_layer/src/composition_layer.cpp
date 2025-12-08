@@ -26,6 +26,51 @@ static PFN_xrWaitSwapchainImage pfn_xrWaitSwapchainImage = nullptr;
 static PFN_xrReleaseSwapchainImage pfn_xrReleaseSwapchainImage = nullptr;
 
 // ============================================
+// OpenGL Extension Function Pointers for FBO
+// ============================================
+// FBO constants
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+
+// Function pointer types
+typedef void (APIENTRY *PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
+typedef void (APIENTRY *PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint *framebuffers);
+typedef void (APIENTRY *PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
+typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+typedef GLenum (APIENTRY *PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
+
+// Static function pointers
+static PFNGLGENFRAMEBUFFERSPROC pfn_glGenFramebuffers = nullptr;
+static PFNGLDELETEFRAMEBUFFERSPROC pfn_glDeleteFramebuffers = nullptr;
+static PFNGLBINDFRAMEBUFFERPROC pfn_glBindFramebuffer = nullptr;
+static PFNGLFRAMEBUFFERTEXTURE2DPROC pfn_glFramebufferTexture2D = nullptr;
+static PFNGLCHECKFRAMEBUFFERSTATUSPROC pfn_glCheckFramebufferStatus = nullptr;
+static bool g_glExtensionsLoaded = false;
+
+// Load GL extensions
+static bool LoadGLExtensions() {
+    if (g_glExtensionsLoaded) return true;
+    
+    HMODULE hOpenGL = GetModuleHandleA("opengl32.dll");
+    if (!hOpenGL) return false;
+    
+    typedef PROC (WINAPI *PFNWGLGETPROCADDRESSPROC)(LPCSTR);
+    PFNWGLGETPROCADDRESSPROC wglGetProcAddress = 
+        (PFNWGLGETPROCADDRESSPROC)GetProcAddress(hOpenGL, "wglGetProcAddress");
+    if (!wglGetProcAddress) return false;
+    
+    pfn_glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
+    pfn_glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
+    pfn_glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    pfn_glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
+    pfn_glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
+    
+    g_glExtensionsLoaded = (pfn_glGenFramebuffers && pfn_glBindFramebuffer);
+    return g_glExtensionsLoaded;
+}
+
+// ============================================
 // Logging
 // ============================================
 static void LogLayer(const char* format, ...) {
@@ -296,6 +341,67 @@ void QuadLayer::SetPosition(float x, float y, float z) {
 
 void QuadLayer::SetSize(float width, float height) {
     m_size = { width, height };
+}
+
+bool QuadLayer::CreateFBO() {
+    if (!LoadGLExtensions()) {
+        LogLayer("Failed to load GL extensions");
+        return false;
+    }
+    
+    if (m_fbo != 0) {
+        return true;  // Already created
+    }
+    
+    pfn_glGenFramebuffers(1, &m_fbo);
+    LogLayer("Created FBO: %u", m_fbo);
+    return m_fbo != 0;
+}
+
+void QuadLayer::ClearWithColor(float r, float g, float b, float a) {
+    if (!m_renderInProgress) {
+        LogLayer("ClearWithColor called outside of render");
+        return;
+    }
+    
+    if (!LoadGLExtensions()) {
+        return;
+    }
+    
+    GLuint texture = m_swapchainImages[m_currentImageIndex].image;
+    
+    // Create FBO if needed
+    if (m_fbo == 0) {
+        CreateFBO();
+    }
+    
+    if (m_fbo == 0) {
+        return;
+    }
+    
+    // Bind our FBO
+    pfn_glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    
+    // Attach texture to FBO
+    pfn_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    
+    // Check FBO completeness
+    GLenum status = pfn_glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        LogLayer("FBO not complete: 0x%X", status);
+        pfn_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
+    
+    // Set viewport
+    glViewport(0, 0, m_width, m_height);
+    
+    // Clear with color
+    glClearColor(r, g, b, a);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    // Unbind FBO (return to default)
+    pfn_glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 }  // namespace gaussian
