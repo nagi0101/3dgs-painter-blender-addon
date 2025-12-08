@@ -35,6 +35,7 @@ typedef void (APIENTRY *PFNGLDELETESHADERPROC)(GLuint shader);
 typedef void (APIENTRY *PFNGLDELETEPROGRAMPROC)(GLuint program);
 typedef GLint (APIENTRY *PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const GLchar *name);
 typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+typedef void (APIENTRY *PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
 
 typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint *arrays);
 typedef void (APIENTRY *PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint *arrays);
@@ -70,6 +71,7 @@ static PFNGLDELETESHADERPROC pfn_glDeleteShader = nullptr;
 static PFNGLDELETEPROGRAMPROC pfn_glDeleteProgram = nullptr;
 static PFNGLGETUNIFORMLOCATIONPROC pfn_glGetUniformLocation = nullptr;
 static PFNGLUNIFORMMATRIX4FVPROC pfn_glUniformMatrix4fv = nullptr;
+static PFNGLUNIFORM1IPROC pfn_glUniform1i = nullptr;
 static PFNGLGENVERTEXARRAYSPROC pfn_glGenVertexArrays = nullptr;
 static PFNGLDELETEVERTEXARRAYSPROC pfn_glDeleteVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC pfn_glBindVertexArray = nullptr;
@@ -114,6 +116,7 @@ static bool LoadRendererExtensions() {
     LOAD_GL(glDeleteProgram);
     LOAD_GL(glGetUniformLocation);
     LOAD_GL(glUniformMatrix4fv);
+    LOAD_GL(glUniform1i);
     LOAD_GL(glGenVertexArrays);
     LOAD_GL(glDeleteVertexArrays);
     LOAD_GL(glBindVertexArray);
@@ -138,12 +141,26 @@ static const char* VERTEX_SHADER = R"(
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec4 aColor;
 
+uniform mat4 uViewMatrix;
+uniform mat4 uProjMatrix;
+uniform bool uUseMatrices;
+
 out vec4 vColor;
 
 void main() {
-    // Simple 2D projection - positions scaled to fit in [-1, 1]
-    gl_Position = vec4(aPosition.xy, 0.0, 1.0);
-    gl_PointSize = 10.0;
+    if (uUseMatrices) {
+        // Apply view/projection for 3D rendering
+        vec4 viewPos = uViewMatrix * vec4(aPosition, 1.0);
+        vec4 clipPos = uProjMatrix * viewPos;
+        gl_Position = clipPos;
+        // Scale point size based on distance
+        float dist = length(viewPos.xyz);
+        gl_PointSize = max(3.0, 30.0 / dist);
+    } else {
+        // Fallback: simple 2D projection
+        gl_Position = vec4(aPosition.xy, 0.0, 1.0);
+        gl_PointSize = 10.0;
+    }
     vColor = aColor;
 }
 )";
@@ -267,6 +284,7 @@ bool GaussianRenderer::CreateShader() {
     // Get uniform locations
     m_viewMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uViewMatrix");
     m_projMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uProjMatrix");
+    m_useMatricesLoc = pfn_glGetUniformLocation(m_shaderProgram, "uUseMatrices");
     
     // Delete shaders (now linked)
     pfn_glDeleteShader(m_vertexShader);
@@ -312,6 +330,20 @@ void GaussianRenderer::Render(
     // Use shader
     pfn_glUseProgram(m_shaderProgram);
     
+    // Upload matrices if available
+    bool useMatrices = (viewMatrix != nullptr && projMatrix != nullptr);
+    if (pfn_glUniform1i && m_useMatricesLoc >= 0) {
+        pfn_glUniform1i(m_useMatricesLoc, useMatrices ? 1 : 0);
+    }
+    if (useMatrices && pfn_glUniformMatrix4fv) {
+        if (m_viewMatrixLoc >= 0) {
+            pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, viewMatrix);
+        }
+        if (m_projMatrixLoc >= 0) {
+            pfn_glUniformMatrix4fv(m_projMatrixLoc, 1, 0, projMatrix);
+        }
+    }
+    
     // Enable blending
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -329,61 +361,89 @@ void GaussianRenderer::Render(
 
 void GaussianRenderer::RenderFromPrimitives(
     const GaussianPrimitive* gaussians,
-    uint32_t count)
+    uint32_t count,
+    const SharedMemoryHeader* header)
 {
     if (!gaussians || count == 0) return;
     
-    // First pass: find bounding box
-    float minX = gaussians[0].position[0], maxX = minX;
-    float minY = gaussians[0].position[1], maxY = minY;
+    // Check if we have valid view/proj matrices
+    bool hasMatrices = false;
+    const float* viewMatrix = nullptr;
+    const float* projMatrix = nullptr;
     
-    for (uint32_t i = 1; i < count; i++) {
-        float x = gaussians[i].position[0];
-        float y = gaussians[i].position[1];
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+    if (header) {
+        // Check if matrices are non-zero (at least one element should be non-zero for valid matrix)
+        bool viewNonZero = false;
+        bool projNonZero = false;
+        for (int i = 0; i < 16; i++) {
+            if (header->view_matrix[i] != 0.0f) viewNonZero = true;
+            if (header->proj_matrix[i] != 0.0f) projNonZero = true;
+        }
+        hasMatrices = viewNonZero && projNonZero;
+        if (hasMatrices) {
+            viewMatrix = header->view_matrix;
+            projMatrix = header->proj_matrix;
+        }
     }
     
-    // Compute center and scale
-    float centerX = (minX + maxX) * 0.5f;
-    float centerY = (minY + maxY) * 0.5f;
-    float rangeX = maxX - minX;
-    float rangeY = maxY - minY;
-    float range = (rangeX > rangeY ? rangeX : rangeY);
-    if (range < 0.001f) range = 1.0f;  // Avoid division by zero
-    
-    // Scale factor: fit into [-0.8, 0.8] with margin
-    float scale = 1.6f / range;
-    
-    // Debug: log first gaussian position
-    static int debugCounter = 0;
-    if (debugCounter++ % 60 == 0) {
-        char buf[256];
-        sprintf(buf, "RenderFromPrimitives: count=%u, bounds=[%.2f,%.2f]-[%.2f,%.2f], scale=%.3f", 
-                count, minX, minY, maxX, maxY, scale);
-        LogRenderer(buf);
-    }
-    
-    // Second pass: extract and normalize positions
     std::vector<float> positions(count * 3);
     std::vector<float> colors(count * 4);
     
-    for (uint32_t i = 0; i < count; i++) {
-        // Normalize position to [-0.8, 0.8] centered around bounding box center
-        positions[i * 3 + 0] = (gaussians[i].position[0] - centerX) * scale;
-        positions[i * 3 + 1] = (gaussians[i].position[1] - centerY) * scale;
-        positions[i * 3 + 2] = 0.0f;  // Ignore Z for 2D display
+    if (hasMatrices) {
+        // Use raw world positions - shader will apply view/proj matrices
+        for (uint32_t i = 0; i < count; i++) {
+            positions[i * 3 + 0] = gaussians[i].position[0];
+            positions[i * 3 + 1] = gaussians[i].position[1];
+            positions[i * 3 + 2] = gaussians[i].position[2];
+            
+            colors[i * 4 + 0] = gaussians[i].color[0];
+            colors[i * 4 + 1] = gaussians[i].color[1];
+            colors[i * 4 + 2] = gaussians[i].color[2];
+            colors[i * 4 + 3] = gaussians[i].color[3];
+        }
         
-        // Color from GaussianPrimitive (R, G, B, A)
-        colors[i * 4 + 0] = gaussians[i].color[0];  // R
-        colors[i * 4 + 1] = gaussians[i].color[1];  // G
-        colors[i * 4 + 2] = gaussians[i].color[2];  // B
-        colors[i * 4 + 3] = gaussians[i].color[3];  // A (opacity)
+        static int debugCounter = 0;
+        if (debugCounter++ % 60 == 0) {
+            LogRenderer("Using 3D projection with view/proj matrices");
+        }
+    } else {
+        // Fallback: bounding box normalization for 2D display
+        float minX = gaussians[0].position[0], maxX = minX;
+        float minY = gaussians[0].position[1], maxY = minY;
+        
+        for (uint32_t i = 1; i < count; i++) {
+            float x = gaussians[i].position[0];
+            float y = gaussians[i].position[1];
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+        
+        float centerX = (minX + maxX) * 0.5f;
+        float centerY = (minY + maxY) * 0.5f;
+        float range = (std::max)(maxX - minX, maxY - minY);
+        if (range < 0.001f) range = 1.0f;
+        float scale = 1.6f / range;
+        
+        for (uint32_t i = 0; i < count; i++) {
+            positions[i * 3 + 0] = (gaussians[i].position[0] - centerX) * scale;
+            positions[i * 3 + 1] = (gaussians[i].position[1] - centerY) * scale;
+            positions[i * 3 + 2] = 0.0f;
+            
+            colors[i * 4 + 0] = gaussians[i].color[0];
+            colors[i * 4 + 1] = gaussians[i].color[1];
+            colors[i * 4 + 2] = gaussians[i].color[2];
+            colors[i * 4 + 3] = gaussians[i].color[3];
+        }
+        
+        static int debugCounter = 0;
+        if (debugCounter++ % 60 == 0) {
+            LogRenderer("Using 2D bounding box normalization (no matrices)");
+        }
     }
     
-    Render(positions.data(), colors.data(), count, nullptr, nullptr);
+    Render(positions.data(), colors.data(), count, viewMatrix, projMatrix);
 }
 
 }  // namespace gaussian

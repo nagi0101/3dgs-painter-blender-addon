@@ -57,11 +57,12 @@ public:
         const float* projMatrix);
     
     /**
-     * Render from GaussianPrimitive array
+     * Render from GaussianPrimitive array with optional view/proj matrices from header
      */
     void RenderFromPrimitives(
         const GaussianPrimitive* gaussians,
-        uint32_t count);
+        uint32_t count,
+        const SharedMemoryHeader* header = nullptr);
 
 private:
     bool CreateShader();
@@ -82,6 +83,7 @@ private:
     // Uniform locations
     GLint m_viewMatrixLoc = -1;
     GLint m_projMatrixLoc = -1;
+    GLint m_useMatricesLoc = -1;
 };
 
 /**

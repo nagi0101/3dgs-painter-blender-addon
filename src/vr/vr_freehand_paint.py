@@ -475,13 +475,51 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
                     rot = g['rotation']
                     rotations[i] = [rot.w, rot.x, rot.y, rot.z]
                 
+                # Get VR view/projection matrices if available
+                view_matrix = None
+                proj_matrix = None
+                try:
+                    wm = context.window_manager
+                    if hasattr(wm, 'xr_session_state') and wm.xr_session_state:
+                        xr = wm.xr_session_state
+                        # Get viewer pose (position + rotation)
+                        viewer_pos = xr.viewer_pose_location
+                        viewer_rot = xr.viewer_pose_rotation
+                        
+                        # Build view matrix from viewer pose
+                        from mathutils import Matrix
+                        rot_mat = viewer_rot.to_matrix().to_4x4()
+                        trans_mat = Matrix.Translation(viewer_pos)
+                        view_mat = (trans_mat @ rot_mat).inverted()
+                        view_matrix = np.array(view_mat, dtype=np.float32).flatten()
+                        
+                        # Simple perspective projection (90 degree FOV)
+                        import math
+                        fov = math.radians(90)
+                        aspect = 1.0
+                        near = 0.1
+                        far = 100.0
+                        f = 1.0 / math.tan(fov / 2)
+                        proj = np.zeros((4, 4), dtype=np.float32)
+                        proj[0, 0] = f / aspect
+                        proj[1, 1] = f
+                        proj[2, 2] = (far + near) / (near - far)
+                        proj[2, 3] = (2 * far * near) / (near - far)
+                        proj[3, 2] = -1
+                        proj_matrix = proj.flatten()
+                        
+                except Exception as e:
+                    print(f"[VR Paint] Matrix extraction error: {e}")
+                
                 write_gaussians_to_vr({
                     'positions': positions,
                     'colors': colors,
                     'scales': scales,
-                    'rotations': rotations
+                    'rotations': rotations,
+                    'view_matrix': view_matrix,
+                    'proj_matrix': proj_matrix
                 })
-                print(f"[VR Paint] OpenXR Layer sync: {n} gaussians")
+                print(f"[VR Paint] OpenXR Layer sync: {n} gaussians (with matrices: {view_matrix is not None})")
                 
         except Exception as e:
             print(f"[VR Paint] OpenXR Layer sync error: {e}")

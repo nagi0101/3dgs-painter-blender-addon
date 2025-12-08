@@ -227,7 +227,8 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
                 if (buffer && buffer->header.gaussian_count > 0) {
                     GetGaussianRenderer().RenderFromPrimitives(
                         buffer->gaussians,
-                        buffer->header.gaussian_count
+                        buffer->header.gaussian_count,
+                        &buffer->header
                     );
                 }
             }
