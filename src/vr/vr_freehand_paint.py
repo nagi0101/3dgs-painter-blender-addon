@@ -88,24 +88,42 @@ def get_controller_tip(context, hand_index: int = 1) -> Optional[Tuple[Vector, Q
 
 def is_trigger_pressed(context, hand_index: int = 1, threshold: float = 0.5) -> Tuple[bool, float]:
     """
-    Check if trigger is pressed using distance-based trigger simulation.
+    Check if VR trigger is pressed using Blender's XR action system.
     
-    Since OpenXR action binding is complex, we use a simplified approach:
-    - For now, return based on VR session active state
-    - TODO: Implement proper action state query
+    Args:
+        context: Blender context
+        hand_index: 0=left, 1=right (default: right hand)
+        threshold: Trigger activation threshold (0.0-1.0)
     
     Returns:
         Tuple of (is_pressed, pressure)
     """
-    # Simplified: Use B button state if available, otherwise simulate
-    # This is a placeholder - real implementation needs OpenXR action binding
     wm = context.window_manager
     
     if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
         return False, 0.0
     
-    # For prototype: Always return False, will be controlled by keyboard in testing
-    # Real implementation: query xr.action_state_get()
+    xr = wm.xr_session_state
+    user_path = "/user/hand/right" if hand_index == 1 else "/user/hand/left"
+    
+    # Try different action names that might be defined
+    action_sets = ["blender_default", "default"]
+    action_names = ["trigger", "trigger_value", "trigger_pull", "teleport"]
+    
+    for action_set in action_sets:
+        for action_name in action_names:
+            try:
+                # action_state_get returns a float for 1D actions like trigger
+                value = xr.action_state_get(context, action_set, action_name, user_path)
+                if value is not None and isinstance(value, (int, float)):
+                    is_pressed = float(value) >= threshold
+                    if is_pressed:
+                        print(f"[VR Paint] Trigger detected: {action_set}/{action_name} = {value}")
+                    return is_pressed, float(value)
+            except Exception:
+                pass  # Action not found, try next
+    
+    # Fallback: return False if no trigger action found
     return False, 0.0
 
 
@@ -280,12 +298,15 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         tip_pos, tip_rot = result
         
-        # Check if painting (keyboard simulation or actual VR trigger)
-        is_painting = self._keyboard_triggered
+        # Check if painting (keyboard simulation OR actual VR trigger)
+        vr_pressed, vr_pressure = is_trigger_pressed(context, hand_index=1)
+        is_painting = self._keyboard_triggered or vr_pressed
         
-        # TODO: Add actual VR trigger check here
-        # vr_pressed, vr_pressure = is_trigger_pressed(context)
-        # is_painting = is_painting or vr_pressed
+        # Auto-manage stroke state based on trigger
+        if is_painting and not self._state.is_painting:
+            self._start_stroke()
+        elif not is_painting and self._state.is_painting and not self._keyboard_triggered:
+            self._end_stroke(context)
         
         if is_painting:
             self._continue_stroke(context, tip_pos, tip_rot)
