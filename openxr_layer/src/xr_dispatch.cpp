@@ -199,11 +199,20 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
     
     // If QuadLayer is initialized, try to render and inject it
     if (g_layerState.quadLayerInitialized && GetQuadLayer().IsInitialized()) {
-        // Acquire texture and render simple color (test)
+        // Acquire texture and render
         GLuint texture = GetQuadLayer().BeginRender();
         if (texture != 0) {
-            // Render bright red for visibility test
-            GetQuadLayer().ClearWithColor(1.0f, 0.0f, 0.0f, 1.0f);  // Bright red
+            // Color based on gaussian data availability:
+            // Red   = No data
+            // Green = Data received (1-49 gaussians)
+            // Blue  = Many gaussians (50+)
+            if (g_layerState.gaussian_render_count >= 50) {
+                GetQuadLayer().ClearWithColor(0.0f, 0.0f, 1.0f, 1.0f);  // Blue
+            } else if (g_layerState.gaussian_render_count > 0) {
+                GetQuadLayer().ClearWithColor(0.0f, 1.0f, 0.0f, 1.0f);  // Green
+            } else {
+                GetQuadLayer().ClearWithColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
+            }
             GetQuadLayer().EndRender();
             
             // Get our quad layer
