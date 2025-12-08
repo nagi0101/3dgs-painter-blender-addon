@@ -47,8 +47,13 @@ target_include_directories(gaussian_layer PRIVATE
 )
 
 # ============================================
-# No link libraries - API Layer is loaded by loader, not linked to it
+# D3D11 for GPU rendering (Phase 3)
 # ============================================
+target_link_libraries(gaussian_layer PRIVATE
+    d3d11
+    dxgi
+    d3dcompiler
+)
 
 # ============================================
 # Export Functions
