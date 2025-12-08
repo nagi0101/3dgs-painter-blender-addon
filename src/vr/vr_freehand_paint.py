@@ -441,31 +441,8 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         except Exception as e:
             print(f"[VR Paint] Viewport sync error: {e}")
         
-        # ============================================================
-        # 2. VR Offscreen Renderer (Phase 1 - visible in VR headset!)
-        # ============================================================
-        try:
-            from .vr_offscreen_renderer import get_vr_offscreen_renderer
-            
-            offscreen = get_vr_offscreen_renderer()
-            
-            if not offscreen._initialized:
-                offscreen.initialize()
-                offscreen.create_display_plane(context)
-            
-            # Clear and add all gaussians
-            offscreen.clear()
-            offscreen.add_gaussians_batch(self._accumulated_gaussians)
-            
-            # Update display
-            offscreen.update_display(context)
-            
-            print(f"[VR Paint] Offscreen display updated: {len(offscreen.gaussian_positions)} gaussians")
-            
-        except Exception as e:
-            print(f"[VR Paint] VR offscreen sync error: {e}")
-            import traceback
-            traceback.print_exc()
+        # VR Offscreen renderer disabled - uses old _accumulated_gaussians format
+        # Will be re-implemented to use SceneData in future
         
         # ============================================================
         # 3. VR Mesh Objects - DISABLED FOR TESTING
@@ -638,7 +615,7 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         # Final sync
         self._sync_to_viewport(context)
         
-        total_gaussians = len(self._accumulated_gaussians)
+        total_gaussians = len(self._session.scene_data) if self._session and self._session.scene_data else 0
         self.report({'INFO'}, f"VR Freehand Paint finished: {total_gaussians} gaussians created")
 
 
