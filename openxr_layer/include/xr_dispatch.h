@@ -7,6 +7,9 @@
 
 #include <cstdint>
 
+// Forward declare ID3D11Device for storage (no D3D11 header needed here)
+struct ID3D11Device;
+
 namespace gaussian {
 
 // ============================================
@@ -21,6 +24,7 @@ typedef XrResult(XRAPI_PTR* PFN_xrGetInstanceProcAddrFP)(XrInstance instance, co
 using PFN_xrEndFrame = XrResult(XRAPI_PTR*)(XrSession, const XrFrameEndInfo*);
 using PFN_xrBeginFrame = XrResult(XRAPI_PTR*)(XrSession, const XrFrameBeginInfo*);
 using PFN_xrWaitFrame = XrResult(XRAPI_PTR*)(XrSession, const XrFrameWaitInfo*, XrFrameState*);
+using PFN_xrCreateSession = XrResult(XRAPI_PTR*)(XrInstance, const XrSessionCreateInfo*, XrSession*);
 
 // ============================================
 // Layer State
@@ -29,15 +33,22 @@ struct LayerState {
     XrInstance instance = XR_NULL_HANDLE;
     XrSession session = XR_NULL_HANDLE;
     
+    // Captured D3D11 device from xrCreateSession
+    ID3D11Device* d3d11Device = nullptr;
+    
     // Original function pointers (to call next in chain)
     PFN_xrEndFrame next_xrEndFrame = nullptr;
     PFN_xrBeginFrame next_xrBeginFrame = nullptr;
     PFN_xrWaitFrame next_xrWaitFrame = nullptr;
+    PFN_xrCreateSession next_xrCreateSession = nullptr;
     PFN_xrGetInstanceProcAddrFP next_xrGetInstanceProcAddr = nullptr;
     
     // Frame timing
     XrTime predicted_display_time = 0;
     bool frame_active = false;
+    
+    // Quad layer initialized
+    bool quadLayerInitialized = false;
     
     // Statistics
     uint64_t frame_count = 0;
@@ -64,6 +75,11 @@ XrResult XRAPI_CALL gaussian_xrWaitFrame(
     XrSession session,
     const XrFrameWaitInfo* frameWaitInfo,
     XrFrameState* frameState);
+
+XrResult XRAPI_CALL gaussian_xrCreateSession(
+    XrInstance instance,
+    const XrSessionCreateInfo* createInfo,
+    XrSession* session);
 
 // ============================================
 // Initialization

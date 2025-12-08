@@ -13,6 +13,8 @@
 #include "xr_dispatch.h"
 #include "shared_memory.h"
 #include "gaussian_data.h"
+#include "composition_layer.h"
+#include "gpu_context.h"
 
 #include <iostream>
 #include <fstream>
@@ -88,6 +90,13 @@ bool InitializeDispatch(XrInstance instance, PFN_xrGetInstanceProcAddrFP getProc
         reinterpret_cast<PFN_xrVoidFunction*>(&g_layerState.next_xrWaitFrame));
     if (XR_FAILED(result)) {
         LogXr("Failed to get xrWaitFrame");
+        return false;
+    }
+    
+    result = getProcAddr(instance, "xrCreateSession",
+        reinterpret_cast<PFN_xrVoidFunction*>(&g_layerState.next_xrCreateSession));
+    if (XR_FAILED(result)) {
+        LogXr("Failed to get xrCreateSession");
         return false;
     }
     
@@ -182,4 +191,47 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
     return g_layerState.next_xrEndFrame(session, frameEndInfo);
 }
 
+// ============================================
+// xrCreateSession Hook - Capture D3D11 Device
+// ============================================
+XrResult XRAPI_CALL gaussian_xrCreateSession(
+    XrInstance instance,
+    const XrSessionCreateInfo* createInfo,
+    XrSession* session)
+{
+    LogXr("gaussian_xrCreateSession called");
+    
+    // Search for D3D11 graphics binding in the next chain
+    const XrBaseInStructure* nextStruct = 
+        reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
+    
+    while (nextStruct != nullptr) {
+        if (nextStruct->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+            // Found D3D11 binding - extract device
+            const XrGraphicsBindingD3D11KHR* d3d11Binding = 
+                reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(nextStruct);
+            
+            g_layerState.d3d11Device = d3d11Binding->device;
+            LogXr("Captured D3D11 device: %p", g_layerState.d3d11Device);
+            break;
+        }
+        nextStruct = nextStruct->next;
+    }
+    
+    if (!g_layerState.d3d11Device) {
+        LogXr("WARNING: No D3D11 device found in session create info");
+    }
+    
+    // Call next in chain
+    XrResult result = g_layerState.next_xrCreateSession(instance, createInfo, session);
+    
+    if (XR_SUCCEEDED(result)) {
+        g_layerState.session = *session;
+        LogXr("Session created: %p", (void*)(*session));
+    }
+    
+    return result;
+}
+
 }  // namespace gaussian
+

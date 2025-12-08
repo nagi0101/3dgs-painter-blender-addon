@@ -81,6 +81,7 @@ XrResult XRAPI_CALL layer_xrGetInstanceProcAddr(XrInstance instance, const char*
     if (strcmp(name, "xrEndFrame") == 0) { *function = (PFN_xrVoidFunction)gaussian::gaussian_xrEndFrame; return XR_SUCCESS; }
     if (strcmp(name, "xrBeginFrame") == 0) { *function = (PFN_xrVoidFunction)gaussian::gaussian_xrBeginFrame; return XR_SUCCESS; }
     if (strcmp(name, "xrWaitFrame") == 0) { *function = (PFN_xrVoidFunction)gaussian::gaussian_xrWaitFrame; return XR_SUCCESS; }
+    if (strcmp(name, "xrCreateSession") == 0) { *function = (PFN_xrVoidFunction)gaussian::gaussian_xrCreateSession; return XR_SUCCESS; }
     auto& state = gaussian::GetLayerState();
     if (state.next_xrGetInstanceProcAddr) return state.next_xrGetInstanceProcAddr(instance, name, function);
     return XR_ERROR_FUNCTION_UNSUPPORTED;
