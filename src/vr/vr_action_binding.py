@@ -60,13 +60,18 @@ def register_paint_action(context) -> bool:
         # Create action for paint button (FLOAT type for button)
         action = actionmap.actionmap_items.new(PAINT_ACTION_NAME, True)
         action.type = 'FLOAT'  # Button press as float 0.0 - 1.0
-        action.user_path0 = "/user/hand/right"
-        action.user_path1 = "/user/hand/left"  # Optional: also allow left hand
+        
+        # Add user paths using the collection API (Blender 5.0+)
+        # user_paths is a collection with new(), remove(), find() methods
+        action.user_paths.new("/user/hand/right")
+        action.user_paths.new("/user/hand/left")  # Optional: also allow left hand
         print(f"[VR ActionBinding] Created action: {PAINT_ACTION_NAME}")
         
         # Create binding for Oculus Touch controller profile
         binding = action.bindings.new(OCULUS_PROFILE, True)
-        binding.component_path0 = B_BUTTON_PATH
+        
+        # component_paths is also a collection in Blender 5.0+
+        binding.component_paths.new(B_BUTTON_PATH)
         print(f"[VR ActionBinding] Created binding: {OCULUS_PROFILE} -> {B_BUTTON_PATH}")
         
         _actions_registered = True
