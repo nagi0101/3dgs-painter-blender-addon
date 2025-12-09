@@ -23,7 +23,7 @@ class NPR_PT_VRPanel(Panel):
         is_running = mgr.is_session_running()
         
         # ============================================
-        # VR Session Control (always visible)
+        # VR Session Control
         # ============================================
         box = layout.box()
         box.label(text="VR Session", icon='VIEW_CAMERA')
@@ -35,45 +35,12 @@ class NPR_PT_VRPanel(Panel):
         else:
             row.operator("threegds.start_vr_session", text="Start VR", icon='PLAY')
         
-        layout.separator()
-        
-        # ============================================
-        # Phase 2: VR RenderEngine Test (ALWAYS VISIBLE!)
-        # ============================================
-        box = layout.box()
-        box.label(text="Phase 2: VR RenderEngine", icon='SCENE')
-        
-        current_engine = context.scene.render.engine
-        box.label(text=f"Engine: {current_engine}")
-        
-        row = box.row(align=True)
-        row.operator("threegds.vr_engine_test", text="Test VR Engine", icon='PLAY')
-        row.operator("threegds.vr_engine_stats", text="Stats", icon='INFO')
-        
-        row = box.row(align=True)
-        row.operator("threegds.vr_engine_clear", text="Clear", icon='X')
-        row.operator("threegds.switch_to_eevee", text="Eevee", icon='SHADING_RENDERED')
-        
-        col = box.column(align=True)
-        col.scale_y = 0.8
-        col.label(text="1. Test VR Engine (PC first)")
-        col.label(text="2. Start VR Session")
-        col.label(text="3. Check Stats!")
-        
-        # ============================================
-        # Phase 3: OpenXR Layer Test (ALWAYS VISIBLE!)
-        # ============================================
-        layout.separator()
-        box = layout.box()
-        box.label(text="Phase 3: OpenXR Layer", icon='GHOST_ENABLED')
-        
-        row = box.row(align=True)
-        row.operator("threegds.openxr_layer_test", text="Send Test Gaussians", icon='EXPORT')
-        
-        col = box.column(align=True)
-        col.scale_y = 0.8
-        col.label(text="Check %TEMP%\\gaussian_layer.log")
-        col.label(text="for 'Gaussians: N' message")
+        # Usage instructions
+        if not is_running:
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="Start VR to paint")
+            col.label(text="TRIGGER = Paint")
         
         # ============================================
         # VR Running sections
@@ -81,19 +48,26 @@ class NPR_PT_VRPanel(Panel):
         if is_running:
             layout.separator()
             
-            # VR Freehand Paint
+            # VR Paint Controls
             box = layout.box()
-            box.label(text="VR Freehand Paint", icon='BRUSH_DATA')
+            box.label(text="VR Paint", icon='BRUSH_DATA')
+            
+            col = box.column(align=True)
+            col.scale_y = 0.8
+            col.label(text="TRIGGER: Paint")
+            col.label(text="Left Stick: Move")
+            
             row = box.row(align=True)
-            row.operator("threegds.vr_freehand_paint", text="Freehand", icon='GREASEPENCIL')
-            row.operator("threegds.vr_freehand_clear", text="Clear", icon='X')
+            row.operator("threegds.vr_freehand_clear", text="Clear All", icon='X')
             
             layout.separator()
             
-            # Testing
+            # Debug
             box = layout.box()
-            box.label(text="Testing", icon='EXPERIMENTAL')
-            box.operator("threegds.test_vr_input", text="Test Controller", icon='OUTLINER_OB_ARMATURE')
+            box.label(text="Debug", icon='EXPERIMENTAL')
+            row = box.row(align=True)
+            row.operator("threegds.test_vr_input", text="Test Controller", icon='OUTLINER_OB_ARMATURE')
+            row.operator("threegds.openxr_layer_test", text="Test Gaussians", icon='EXPORT')
 
 
 classes = [NPR_PT_VRPanel]
