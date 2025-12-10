@@ -200,3 +200,6 @@ pyrightconfig.json
 
 # Custom ignores
 .python_dependencies/
+
+# Custom includes
+!openxr_layer/manifest/
