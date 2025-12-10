@@ -171,9 +171,23 @@ void main() {
         return;
     }
     
-    // Fixed size quads (based on scale but simplified)
-    float size = max(aScale.x, max(aScale.y, aScale.z));
-    float sizeNDC = clamp(size * 0.1, 0.02, 0.3);  // 2% to 30% of screen
+    // Perspective-correct size calculation
+    // World size -> Screen size using perspective projection
+    float worldSize = max(aScale.x, max(aScale.y, aScale.z));
+    float depth = posClip.w;  // Distance from camera
+    
+    // Project world size to screen pixels using focal length
+    // sizePixels = (worldSize * focalLength) / depth
+    float sizePixels = (worldSize * uFocal.x) / depth;
+    
+    // Convert pixels to NDC (Normalized Device Coordinates)
+    // NDC range is [-1, 1], so divide by half viewport width
+    float sizeNDC = (sizePixels / uViewport.x) * 2.0;
+    
+    // Clamp to reasonable range to avoid tiny/huge quads
+    sizeNDC = clamp(sizeNDC, 0.005, 0.5);
+    
+    // Apply billboard offset in clip space
     posClip.xy += aQuadPos * sizeNDC * posClip.w;
     
     gl_Position = posClip;
