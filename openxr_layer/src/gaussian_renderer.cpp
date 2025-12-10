@@ -1,12 +1,15 @@
 /**
- * Gaussian Renderer Implementation (Phase 3.5)
- * 
- * Simple point-based rendering as first step toward full Gaussian splatting.
+ * Gaussian Renderer Implementation - Full Splatting
+ *
+ * This implementation is a C++ port of the Python-based GLSL
+ * renderer, featuring full 3D to 2D Gaussian covariance projection.
  */
 
 #include "gaussian_renderer.h"
 #include <cstdio>
 #include <cstring>
+#include <vector>
+#include <cmath>
 
 namespace gaussian {
 
@@ -35,8 +38,8 @@ typedef void (APIENTRY *PFNGLDELETESHADERPROC)(GLuint shader);
 typedef void (APIENTRY *PFNGLDELETEPROGRAMPROC)(GLuint program);
 typedef GLint (APIENTRY *PFNGLGETUNIFORMLOCATIONPROC)(GLuint program, const GLchar *name);
 typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+typedef void (APIENTRY *PFNGLUNIFORM4FVPROC)(GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRY *PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
-
 typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint *arrays);
 typedef void (APIENTRY *PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint *arrays);
 typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
@@ -46,6 +49,10 @@ typedef void (APIENTRY *PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
 typedef void (APIENTRY *PFNGLBUFFERDATAPROC)(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
 typedef void (APIENTRY *PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
 typedef void (APIENTRY *PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
+typedef void (APIENTRY *PFNGLVERTEXATTRIBDIVISORPROC)(GLuint index, GLuint divisor);
+typedef void (APIENTRY *PFNGLDRAWARRAYSINSTANCEDPROC)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
+typedef void (APIENTRY *PFNGLUNIFORM2FPROC)(GLint location, GLfloat v0, GLfloat v1);
+typedef void (APIENTRY *PFNGLUNIFORM4FPROC)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
 
 // OpenGL Constants
 #define GL_VERTEX_SHADER 0x8B31
@@ -55,8 +62,10 @@ typedef void (APIENTRY *PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_DYNAMIC_DRAW 0x88E8
 #define GL_STATIC_DRAW 0x88E4
-#define GL_PROGRAM_POINT_SIZE 0x8642
 #define GL_TRIANGLES 0x0004
+#define GL_TRIANGLE_STRIP 0x0005
+#define GL_LESS 0x0201
+#define GL_LEQUAL 0x0203
 
 // Function pointers
 static PFNGLCREATESHADERPROC pfn_glCreateShader = nullptr;
@@ -73,6 +82,7 @@ static PFNGLDELETESHADERPROC pfn_glDeleteShader = nullptr;
 static PFNGLDELETEPROGRAMPROC pfn_glDeleteProgram = nullptr;
 static PFNGLGETUNIFORMLOCATIONPROC pfn_glGetUniformLocation = nullptr;
 static PFNGLUNIFORMMATRIX4FVPROC pfn_glUniformMatrix4fv = nullptr;
+static PFNGLUNIFORM4FVPROC pfn_glUniform4fv = nullptr;
 static PFNGLUNIFORM1IPROC pfn_glUniform1i = nullptr;
 static PFNGLGENVERTEXARRAYSPROC pfn_glGenVertexArrays = nullptr;
 static PFNGLDELETEVERTEXARRAYSPROC pfn_glDeleteVertexArrays = nullptr;
@@ -83,6 +93,11 @@ static PFNGLBINDBUFFERPROC pfn_glBindBuffer = nullptr;
 static PFNGLBUFFERDATAPROC pfn_glBufferData = nullptr;
 static PFNGLVERTEXATTRIBPOINTERPROC pfn_glVertexAttribPointer = nullptr;
 static PFNGLENABLEVERTEXATTRIBARRAYPROC pfn_glEnableVertexAttribArray = nullptr;
+static PFNGLVERTEXATTRIBDIVISORPROC pfn_glVertexAttribDivisor = nullptr;
+static PFNGLDRAWARRAYSINSTANCEDPROC pfn_glDrawArraysInstanced = nullptr;
+static PFNGLUNIFORM2FPROC pfn_glUniform2f = nullptr;
+static PFNGLUNIFORM4FPROC pfn_glUniform4f = nullptr;
+
 
 static bool g_rendererExtLoaded = false;
 
@@ -121,6 +136,7 @@ static bool LoadRendererExtensions() {
     LOAD_GL(glDeleteProgram);
     LOAD_GL(glGetUniformLocation);
     LOAD_GL(glUniformMatrix4fv);
+    LOAD_GL(glUniform4fv);
     LOAD_GL(glUniform1i);
     LOAD_GL(glGenVertexArrays);
     LOAD_GL(glDeleteVertexArrays);
@@ -131,70 +147,141 @@ static bool LoadRendererExtensions() {
     LOAD_GL(glBufferData);
     LOAD_GL(glVertexAttribPointer);
     LOAD_GL(glEnableVertexAttribArray);
-    
+    LOAD_GL(glVertexAttribDivisor);
+    LOAD_GL(glDrawArraysInstanced);
+    LOAD_GL(glUniform2f);
+    LOAD_GL(glUniform4f);
+
     #undef LOAD_GL
     
-    g_rendererExtLoaded = (pfn_glCreateShader && pfn_glCreateProgram);
+    g_rendererExtLoaded = (pfn_glCreateShader && pfn_glCreateProgram && pfn_glVertexAttribDivisor);
     return g_rendererExtLoaded;
 }
 
 // ============================================
-// GLSL Shaders - Full Gaussian Splatting
+// GLSL Shaders - Ported from Python implementation
 // ============================================
 static const char* VERTEX_SHADER = R"(
 #version 330 core
 
-// Per-vertex: billboard quad corner (0-3)
-layout(location = 0) in vec2 aQuadPos;  // [-1,1] x [-1,1]
+// Per-vertex: quad corner
+layout(location = 0) in vec2 quadPosition; // [0,1]
 
 // Per-instance: gaussian data
-layout(location = 1) in vec3 aPosition;    // World position
-layout(location = 2) in vec4 aRotation;    // Quaternion (w,x,y,z)
-layout(location = 3) in vec3 aScale;       // Scale (x,y,z)
-layout(location = 4) in vec4 aColor;       // RGBA
+layout(location = 1) in vec3 gPosition;    // World position
+layout(location = 2) in vec4 gRotation;    // Quaternion (w,x,y,z)
+layout(location = 3) in vec3 gScale;       // Scale (x,y,z)
+layout(location = 4) in vec4 gColor;       // RGBA
 
-uniform mat4 uViewMatrix;
-uniform mat4 uProjMatrix;
-uniform vec2 uViewport;      // Viewport size in pixels
-uniform vec2 uFocal;         // Focal lengths (fx, fy)
+// Uniforms
+uniform mat4 viewProjectionMatrix;
+uniform mat4 viewMatrix;
+uniform vec4 camPosAndFocalX;
+uniform vec4 viewportAndFocalY;
 
+// Outputs to fragment shader
 out vec4 vColor;
+out vec3 vConic;
 out vec2 vCoordXY;
 
-void main() {
-    // Transform to clip space using actual position
-    vec4 posClip = uProjMatrix * uViewMatrix * vec4(aPosition, 1.0);
+// Build rotation matrix from quaternion (w, x, y, z)
+mat3 quatToMat(vec4 q) {
+    float w = q.x, x = q.y, y = q.z, z = q.w;
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    float wx = w*x, wy = w*y, wz = w*z;
     
-    // Skip if behind camera
-    if (posClip.w <= 0.01) {
+    return mat3(
+        1.0 - 2.0*(yy + zz), 2.0*(xy + wz), 2.0*(xz - wy),
+        2.0*(xy - wz), 1.0 - 2.0*(xx + zz), 2.0*(yz + wx),
+        2.0*(xz + wy), 2.0*(yz - wx), 1.0 - 2.0*(xx + yy)
+    );
+}
+
+// Compute 3D covariance from scale and rotation
+mat3 computeCov3D(vec3 scale, vec4 rot) {
+    mat3 R = quatToMat(rot);
+    mat3 S = mat3(
+        scale.x, 0.0, 0.0,
+        0.0, scale.y, 0.0,
+        0.0, 0.0, scale.z
+    );
+    mat3 RS = R * S;
+    return RS * transpose(RS);
+}
+
+// Project 3D covariance to 2D using Jacobian
+vec3 computeCov2D(vec3 mean, mat3 cov3D, float focalX, float focalY) {
+    float z = mean.z;
+    float z2 = z * z;
+    
+    mat3 J = mat3(
+        focalX / z, 0.0, 0.0,
+        0.0, focalY / z, 0.0,
+        -focalX * mean.x / z2, -focalY * mean.y / z2, 0.0
+    );
+    
+    mat3 cov2D = J * cov3D * transpose(J);
+    
+    cov2D[0][0] += 0.3;
+    cov2D[1][1] += 0.3;
+    
+    return vec3(cov2D[0][0], cov2D[0][1], cov2D[1][1]);
+}
+
+void main() {
+    // Unpack uniforms
+    float focalX = camPosAndFocalX.w;
+    vec2 viewport = viewportAndFocalY.xy;
+    float focalY = viewportAndFocalY.z;
+
+    // Transform to clip space
+    vec4 posClip = viewProjectionMatrix * vec4(gPosition, 1.0);
+    
+    // Early frustum culling
+    if (posClip.w <= 0.01 || abs(posClip.x/posClip.w) > 1.3 || abs(posClip.y/posClip.w) > 1.3) {
         gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
         return;
     }
+
+    // Compute view-space position
+    vec3 posView = (viewMatrix * vec4(gPosition, 1.0)).xyz;
     
-    // Perspective-correct size calculation
-    // World size -> Screen size using perspective projection
-    float worldSize = max(aScale.x, max(aScale.y, aScale.z));
-    float depth = posClip.w;  // Distance from camera
+    // Compute 3D covariance in WORLD space
+    mat3 cov3D_world = computeCov3D(gScale, gRotation);
     
-    // Project world size to screen pixels using focal length
-    // sizePixels = (worldSize * focalLength) / depth
-    float sizePixels = (worldSize * uFocal.x) / depth;
+    // Transform covariance to VIEW space: cov3D_view = V * cov3D_world * V^T
+    mat3 V = mat3(viewMatrix);
+    mat3 cov3D_view = V * cov3D_world * transpose(V);
     
-    // Convert pixels to NDC (Normalized Device Coordinates)
-    // NDC range is [-1, 1], so divide by half viewport width
-    float sizeNDC = (sizePixels / uViewport.x) * 2.0;
+    // Project to 2D covariance
+    vec3 cov2D = computeCov2D(posView, cov3D_view, focalX, focalY);
     
-    // Clamp to reasonable range to avoid tiny/huge quads
-    sizeNDC = clamp(sizeNDC, 0.005, 0.5);
+    // Compute inverse covariance (conic)
+    float det = cov2D.x * cov2D.z - cov2D.y * cov2D.y;
+    if (det <= 0.0) {
+        gl_Position = vec4(-100.0, -100.0, -100.0, 1.0);
+        return;
+    }
+    float detInv = 1.0 / det;
+    vConic = vec3(cov2D.z * detInv, -cov2D.y * detInv, cov2D.x * detInv);
     
-    // Apply billboard offset in clip space
-    posClip.xy += aQuadPos * sizeNDC * posClip.w;
+    // Compute quad extent (3-sigma)
+    float maxRadius = 3.0 * sqrt(max(cov2D.x, cov2D.z));
+    maxRadius = clamp(maxRadius, 1.0, 1000.0);
+    
+    // Convert to NDC
+    vec2 quadExtentNDC = vec2(maxRadius) / viewport * 2.0;
+    
+    // Billboard quad offset
+    vec2 quadOffset = (quadPosition - 0.5) * 2.0;
+    posClip.xy += quadOffset * quadExtentNDC * posClip.w;
     
     gl_Position = posClip;
     
-    // Use actual Gaussian color
-    vColor = aColor;
-    vCoordXY = aQuadPos;
+    // Output to fragment shader
+    vColor = gColor;
+    vCoordXY = quadOffset * maxRadius;
 }
 )";
 
@@ -202,35 +289,34 @@ static const char* FRAGMENT_SHADER = R"(
 #version 330 core
 
 in vec4 vColor;
+in vec3 vConic;
 in vec2 vCoordXY;
 
 out vec4 fragColor;
 
 void main() {
-    // Simple soft circle
-    float dist = length(vCoordXY);
-    if (dist > 1.0) {
+    // Evaluate 2D Gaussian: exp(-0.5 * x^T * conic * x)
+    float power = -0.5 * (
+        vConic.x * vCoordXY.x * vCoordXY.x +
+        vConic.z * vCoordXY.y * vCoordXY.y +
+        2.0 * vConic.y * vCoordXY.x * vCoordXY.y
+    );
+    
+    if (power > 0.0) {
         discard;
     }
     
-    // Gaussian-like falloff
-    float alpha = exp(-2.0 * dist * dist);
+    float alpha = vColor.a * exp(power);
     
-    // Use the Gaussian's color with alpha
-    fragColor = vec4(vColor.rgb * alpha, vColor.a * alpha);
+    if (alpha < 0.004) { // 1/255
+        discard;
+    }
+    
+    alpha = min(alpha, 0.99);
+    
+    fragColor = vec4(vColor.rgb * alpha, alpha);
 }
 )";
-
-// ============================================
-// GL Extension for instanced rendering
-// ============================================
-typedef void (APIENTRY *PFNGLVERTEXATTRIBDIVISORPROC)(GLuint index, GLuint divisor);
-typedef void (APIENTRY *PFNGLDRAWARRAYSINSTANCEDPROC)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
-typedef void (APIENTRY *PFNGLUNIFORM2FPROC)(GLint location, GLfloat v0, GLfloat v1);
-
-static PFNGLVERTEXATTRIBDIVISORPROC pfn_glVertexAttribDivisor = nullptr;
-static PFNGLDRAWARRAYSINSTANCEDPROC pfn_glDrawArraysInstanced = nullptr;
-static PFNGLUNIFORM2FPROC pfn_glUniform2f = nullptr;
 
 // ============================================
 // Global Instance
@@ -258,18 +344,6 @@ bool GaussianRenderer::Initialize() {
     if (!LoadRendererExtensions()) {
         LogRenderer("Failed to load GL extensions");
         return false;
-    }
-    
-    // Load additional extensions for instancing
-    HMODULE hGL = GetModuleHandleA("opengl32.dll");
-    if (hGL) {
-        typedef PROC (WINAPI *PFNWGLGETPROCADDRESSPROC)(LPCSTR);
-        auto wglGetProcAddress = (PFNWGLGETPROCADDRESSPROC)GetProcAddress(hGL, "wglGetProcAddress");
-        if (wglGetProcAddress) {
-            pfn_glVertexAttribDivisor = (PFNGLVERTEXATTRIBDIVISORPROC)wglGetProcAddress("glVertexAttribDivisor");
-            pfn_glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)wglGetProcAddress("glDrawArraysInstanced");
-            pfn_glUniform2f = (PFNGLUNIFORM2FPROC)wglGetProcAddress("glUniform2f");
-        }
     }
     
     if (!CreateShader()) {
@@ -305,7 +379,6 @@ void GaussianRenderer::Shutdown() {
 }
 
 bool GaussianRenderer::CreateShader() {
-    // Create vertex shader
     m_vertexShader = pfn_glCreateShader(GL_VERTEX_SHADER);
     pfn_glShaderSource(m_vertexShader, 1, &VERTEX_SHADER, nullptr);
     pfn_glCompileShader(m_vertexShader);
@@ -320,7 +393,6 @@ bool GaussianRenderer::CreateShader() {
         return false;
     }
     
-    // Create fragment shader
     m_fragmentShader = pfn_glCreateShader(GL_FRAGMENT_SHADER);
     pfn_glShaderSource(m_fragmentShader, 1, &FRAGMENT_SHADER, nullptr);
     pfn_glCompileShader(m_fragmentShader);
@@ -334,7 +406,6 @@ bool GaussianRenderer::CreateShader() {
         return false;
     }
     
-    // Create program
     m_shaderProgram = pfn_glCreateProgram();
     pfn_glAttachShader(m_shaderProgram, m_vertexShader);
     pfn_glAttachShader(m_shaderProgram, m_fragmentShader);
@@ -350,12 +421,11 @@ bool GaussianRenderer::CreateShader() {
     }
     
     // Get uniform locations
-    m_viewMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uViewMatrix");
-    m_projMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "uProjMatrix");
-    m_viewportLoc = pfn_glGetUniformLocation(m_shaderProgram, "uViewport");
-    m_focalLoc = pfn_glGetUniformLocation(m_shaderProgram, "uFocal");
-    
-    // Delete shaders (now linked)
+    m_viewProjMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "viewProjectionMatrix");
+    m_viewMatrixLoc = pfn_glGetUniformLocation(m_shaderProgram, "viewMatrix");
+    m_camPosAndFocalXLoc = pfn_glGetUniformLocation(m_shaderProgram, "camPosAndFocalX");
+    m_viewportAndFocalYLoc = pfn_glGetUniformLocation(m_shaderProgram, "viewportAndFocalY");
+
     pfn_glDeleteShader(m_vertexShader);
     pfn_glDeleteShader(m_fragmentShader);
     
@@ -367,15 +437,12 @@ bool GaussianRenderer::CreateBuffers() {
     pfn_glGenVertexArrays(1, &m_vao);
     pfn_glBindVertexArray(m_vao);
     
-    // Billboard quad vertices (6 vertices = 2 triangles)
-    // Each vertex is vec2 in [-1, 1] range
+    // Quad vertices [0,1] for a triangle strip
     static const float quadVertices[] = {
-        -1.0f, -1.0f,
-         1.0f, -1.0f,
-         1.0f,  1.0f,
-        -1.0f, -1.0f,
-         1.0f,  1.0f,
-        -1.0f,  1.0f
+        0.0f, 0.0f,
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
     };
     
     pfn_glGenBuffers(1, &m_quadBuffer);
@@ -386,12 +453,12 @@ bool GaussianRenderer::CreateBuffers() {
     pfn_glVertexAttribPointer(0, 2, GL_FLOAT, 0, 2 * sizeof(float), nullptr);
     pfn_glEnableVertexAttribArray(0);
     
-    // Instance buffer (per-gaussian data)
+    // Instance buffer (will be populated on render)
     pfn_glGenBuffers(1, &m_instanceBuffer);
     
     pfn_glBindVertexArray(0);
     
-    LogRenderer("Buffers created (instanced quads)");
+    LogRenderer("Buffers created (instanced triangle strip)");
     return true;
 }
 
@@ -400,144 +467,16 @@ void GaussianRenderer::RenderFromPrimitives(
     uint32_t count,
     const SharedMemoryHeader* header)
 {
-    if (!m_initialized || !gaussians || count == 0) return;
-    
-    // Debug logging
-    static int debugCounter = 0;
-    if (debugCounter++ % 60 == 0) {
-        char buf[256];
-        sprintf(buf, "RenderFromPrimitives (splatting): count=%u", count);
-        LogRenderer(buf);
+    // This function is now deprecated in favor of RenderFromPrimitivesWithMatrices
+    // but can be kept for compatibility or removed. For now, we do nothing.
+    (void)gaussians;
+    (void)count;
+    (void)header;
+    static bool warned = false;
+    if (!warned) {
+        LogRenderer("RenderFromPrimitives is deprecated. Use RenderFromPrimitivesWithMatrices.");
+        warned = true;
     }
-    
-    // Check for valid matrices
-    bool hasMatrices = false;
-    if (header) {
-        for (int i = 0; i < 16; i++) {
-            if (header->view_matrix[i] != 0.0f || header->proj_matrix[i] != 0.0f) {
-                hasMatrices = true;
-                break;
-            }
-        }
-    }
-    
-    if (!hasMatrices) {
-        // Fallback: can't render without matrices in splatting mode
-        static int warnCounter = 0;
-        if (warnCounter++ % 60 == 0) {
-            LogRenderer("Warning: No view/proj matrices, skipping splat render");
-        }
-        return;
-    }
-    
-    // Prepare instance data: [position(3) + rotation(4) + scale(3) + color(4)] = 14 floats per gaussian
-    const int floatsPerInstance = 14;
-    std::vector<float> instanceData(count * floatsPerInstance);
-    
-    for (uint32_t i = 0; i < count; i++) {
-        int base = i * floatsPerInstance;
-        const auto& g = gaussians[i];
-        
-        // Position (3)
-        instanceData[base + 0] = g.position[0];
-        instanceData[base + 1] = g.position[1];
-        instanceData[base + 2] = g.position[2];
-        
-        // Rotation quaternion (4) - w, x, y, z
-        instanceData[base + 3] = g.rotation[0];  // w
-        instanceData[base + 4] = g.rotation[1];  // x
-        instanceData[base + 5] = g.rotation[2];  // y
-        instanceData[base + 6] = g.rotation[3];  // z
-        
-        // Scale (3)
-        instanceData[base + 7] = g.scale[0];
-        instanceData[base + 8] = g.scale[1];
-        instanceData[base + 9] = g.scale[2];
-        
-        // Color (4)
-        instanceData[base + 10] = g.color[0];
-        instanceData[base + 11] = g.color[1];
-        instanceData[base + 12] = g.color[2];
-        instanceData[base + 13] = g.color[3];
-    }
-    
-    // Bind VAO
-    pfn_glBindVertexArray(m_vao);
-    
-    // Upload instance data
-    pfn_glBindBuffer(GL_ARRAY_BUFFER, m_instanceBuffer);
-    pfn_glBufferData(GL_ARRAY_BUFFER, instanceData.size() * sizeof(float), instanceData.data(), GL_DYNAMIC_DRAW);
-    
-    // Setup instance attributes
-    const int stride = floatsPerInstance * sizeof(float);
-    
-    // Location 1: position (3 floats)
-    pfn_glVertexAttribPointer(1, 3, GL_FLOAT, 0, stride, (void*)(0 * sizeof(float)));
-    pfn_glEnableVertexAttribArray(1);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(1, 1);
-    
-    // Location 2: rotation (4 floats)
-    pfn_glVertexAttribPointer(2, 4, GL_FLOAT, 0, stride, (void*)(3 * sizeof(float)));
-    pfn_glEnableVertexAttribArray(2);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(2, 1);
-    
-    // Location 3: scale (3 floats)
-    pfn_glVertexAttribPointer(3, 3, GL_FLOAT, 0, stride, (void*)(7 * sizeof(float)));
-    pfn_glEnableVertexAttribArray(3);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(3, 1);
-    
-    // Location 4: color (4 floats)
-    pfn_glVertexAttribPointer(4, 4, GL_FLOAT, 0, stride, (void*)(10 * sizeof(float)));
-    pfn_glEnableVertexAttribArray(4);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(4, 1);
-    
-    // Use shader
-    pfn_glUseProgram(m_shaderProgram);
-    
-    // Upload uniforms
-    if (pfn_glUniformMatrix4fv) {
-        if (m_viewMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, header->view_matrix);
-        }
-        if (m_projMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_projMatrixLoc, 1, 0, header->proj_matrix);
-        }
-    }
-    
-    // Viewport and focal length from projection matrix
-    // Standard VR viewport is 1024x1024 (our quad texture size)
-    float viewportW = 1024.0f;
-    float viewportH = 1024.0f;
-    
-    // Extract focal lengths from projection matrix
-    // P[0][0] = 2*fx/width, P[1][1] = 2*fy/height
-    float focalX = header->proj_matrix[0] * viewportW * 0.5f;
-    float focalY = header->proj_matrix[5] * viewportH * 0.5f;
-    
-    if (pfn_glUniform2f) {
-        if (m_viewportLoc >= 0) {
-            pfn_glUniform2f(m_viewportLoc, viewportW, viewportH);
-        }
-        if (m_focalLoc >= 0) {
-            pfn_glUniform2f(m_focalLoc, focalX, focalY);
-        }
-    }
-    
-    // Enable blending for proper alpha compositing
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);  // Premultiplied alpha
-    
-    // Disable depth test for painterly overlapping
-    glDisable(GL_DEPTH_TEST);
-    
-    // Draw instanced quads
-    if (pfn_glDrawArraysInstanced) {
-        pfn_glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
-    }
-    
-    // Cleanup
-    pfn_glBindVertexArray(0);
-    pfn_glUseProgram(0);
 }
 
 void GaussianRenderer::RenderFromPrimitivesWithMatrices(
@@ -545,24 +484,18 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
     uint32_t count,
     const float* viewMatrix,
     const float* projMatrix,
-    const float* cameraRotation,
     const float* cameraPosition,
+    const float* cameraRotation,
     uint32_t viewportWidth,
     uint32_t viewportHeight)
 {
-    if (!m_initialized || count == 0 || !gaussians || !viewMatrix || !projMatrix) {
+    if (!m_initialized || count == 0 || !gaussians || !viewMatrix || !projMatrix || !cameraPosition) {
         return;
     }
     
-    // NOTE: Do NOT apply any transformations to gaussian positions!
-    // Python view matrix is in Blender WORLD space and already handles:
-    // - Viewer position (head tracking)
-    // - Viewer rotation (head rotation)
-    // Gaussians should remain in raw Blender world coordinates to match.
-    (void)cameraPosition;   // Unused - kept for future use
-    (void)cameraRotation;   // Unused - Python view matrix handles rotation
-    
-    // Prepare instance data: [position(3) + rotation(4) + scale(3) + color(4)] = 14 floats per gaussian
+    (void)cameraRotation;
+
+    // Prepare instance data: [pos(3) + rot(4) + scale(3) + color(4)] = 14 floats
     const int floatsPerInstance = 14;
     std::vector<float> instanceData(count * floatsPerInstance);
     
@@ -570,114 +503,90 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
         int base = i * floatsPerInstance;
         const auto& g = gaussians[i];
         
-        // Use raw Blender world coordinates - NO transformations!
-        // Python view matrix handles world-to-view transformation.
         instanceData[base + 0] = g.position[0];
         instanceData[base + 1] = g.position[1];
         instanceData[base + 2] = g.position[2];
         
-        // DEBUG: Log first gaussian position every ~60 frames
-        static int debugCounter = 0;
-        if (i == 0 && debugCounter++ % 60 == 0) {
-            char logPath[512];
-            const char* tempDir = getenv("TEMP");
-            if (!tempDir) tempDir = "C:\\Temp";
-            snprintf(logPath, sizeof(logPath), "%s\\gaussian_pos_debug.log", tempDir);
-            
-            FILE* f = fopen(logPath, "a");
-            if (f) {
-                fprintf(f, "[C++] Input:  (%.2f, %.2f, %.2f) -> Output: (%.2f, %.2f, %.2f)\n",
-                    g.position[0], g.position[1], g.position[2],
-                    instanceData[base + 0], instanceData[base + 1], instanceData[base + 2]);
-                fprintf(f, "[C++] ViewMatrix[12-14]: (%.2f, %.2f, %.2f)\n",
-                    viewMatrix[12], viewMatrix[13], viewMatrix[14]);
-                fclose(f);
-            }
-        }
+        instanceData[base + 3] = g.rotation[0]; // w
+        instanceData[base + 4] = g.rotation[1]; // x
+        instanceData[base + 5] = g.rotation[2]; // y
+        instanceData[base + 6] = g.rotation[3]; // z
         
-        instanceData[base + 3] = g.rotation[0];
-        instanceData[base + 4] = g.rotation[1];
-        instanceData[base + 5] = g.rotation[2];
-        instanceData[base + 6] = g.rotation[3];
         instanceData[base + 7] = g.scale[0];
         instanceData[base + 8] = g.scale[1];
         instanceData[base + 9] = g.scale[2];
+        
         instanceData[base + 10] = g.color[0];
         instanceData[base + 11] = g.color[1];
         instanceData[base + 12] = g.color[2];
         instanceData[base + 13] = g.color[3];
     }
     
-    // Bind VAO
     pfn_glBindVertexArray(m_vao);
     
-    // Upload instance data
     pfn_glBindBuffer(GL_ARRAY_BUFFER, m_instanceBuffer);
     pfn_glBufferData(GL_ARRAY_BUFFER, instanceData.size() * sizeof(float), instanceData.data(), GL_DYNAMIC_DRAW);
     
-    // Setup instance attributes
     const int stride = floatsPerInstance * sizeof(float);
-    pfn_glVertexAttribPointer(1, 3, GL_FLOAT, 0, stride, (void*)(0 * sizeof(float)));
+    pfn_glVertexAttribPointer(1, 3, GL_FLOAT, 0, stride, (void*)(0 * sizeof(float)));  // gPosition
     pfn_glEnableVertexAttribArray(1);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(1, 1);
+    pfn_glVertexAttribDivisor(1, 1);
     
-    pfn_glVertexAttribPointer(2, 4, GL_FLOAT, 0, stride, (void*)(3 * sizeof(float)));
+    pfn_glVertexAttribPointer(2, 4, GL_FLOAT, 0, stride, (void*)(3 * sizeof(float)));  // gRotation
     pfn_glEnableVertexAttribArray(2);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(2, 1);
+    pfn_glVertexAttribDivisor(2, 1);
     
-    pfn_glVertexAttribPointer(3, 3, GL_FLOAT, 0, stride, (void*)(7 * sizeof(float)));
+    pfn_glVertexAttribPointer(3, 3, GL_FLOAT, 0, stride, (void*)(7 * sizeof(float)));  // gScale
     pfn_glEnableVertexAttribArray(3);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(3, 1);
+    pfn_glVertexAttribDivisor(3, 1);
     
-    pfn_glVertexAttribPointer(4, 4, GL_FLOAT, 0, stride, (void*)(10 * sizeof(float)));
+    pfn_glVertexAttribPointer(4, 4, GL_FLOAT, 0, stride, (void*)(10 * sizeof(float))); // gColor
     pfn_glEnableVertexAttribArray(4);
-    if (pfn_glVertexAttribDivisor) pfn_glVertexAttribDivisor(4, 1);
+    pfn_glVertexAttribDivisor(4, 1);
     
-    // Use shader
     pfn_glUseProgram(m_shaderProgram);
     
-    // Upload view/projection matrices (explicit from ProjectionLayer)
-    if (pfn_glUniformMatrix4fv) {
-        if (m_viewMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, viewMatrix);
-        }
-        if (m_projMatrixLoc >= 0) {
-            pfn_glUniformMatrix4fv(m_projMatrixLoc, 1, 0, projMatrix);
+    // Compute View-Projection Matrix
+    float viewProjMatrix[16];
+    // projMatrix is column-major, viewMatrix is column-major
+    // result(i,j) = sum_k proj(i,k) * view(k,j)
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            viewProjMatrix[j*4+i] = 0;
+            for (int k = 0; k < 4; ++k) {
+                viewProjMatrix[j*4+i] += projMatrix[k*4+i] * viewMatrix[j*4+k];
+            }
         }
     }
-    
-    // Viewport and focal length
+
+    // Upload uniforms
+    pfn_glUniformMatrix4fv(m_viewProjMatrixLoc, 1, 0, viewProjMatrix);
+    pfn_glUniformMatrix4fv(m_viewMatrixLoc, 1, 0, viewMatrix);
+
     float viewportW = (float)viewportWidth;
     float viewportH = (float)viewportHeight;
     float focalX = projMatrix[0] * viewportW * 0.5f;
     float focalY = projMatrix[5] * viewportH * 0.5f;
-    
-    if (pfn_glUniform2f) {
-        if (m_viewportLoc >= 0) {
-            pfn_glUniform2f(m_viewportLoc, viewportW, viewportH);
-        }
-        if (m_focalLoc >= 0) {
-            pfn_glUniform2f(m_focalLoc, focalX, focalY);
-        }
-    }
-    
-    // Enable blending, disable depth test
+
+    pfn_glUniform4f(m_camPosAndFocalXLoc, cameraPosition[0], cameraPosition[1], cameraPosition[2], focalX);
+    pfn_glUniform4f(m_viewportAndFocalYLoc, viewportW, viewportH, focalY, 0.0f);
+
+    // Set GPU state
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glDisable(GL_DEPTH_TEST);
-    
-    // Draw instanced quads
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // Premultiplied alpha
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE); // Don't write to depth buffer
+
+    // Draw instanced triangle strip
     if (pfn_glDrawArraysInstanced) {
-        static bool loggedDraw = false;
-        if (!loggedDraw) {
-            printf("[GaussianRender] DRAW CALL: count=%u, program=%u, vao=%u\n", count, m_shaderProgram, m_vao);
-            fflush(stdout);
-            loggedDraw = true;
-        }
-        pfn_glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);
+        pfn_glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
     }
     
-    // Cleanup
+    // Cleanup state
+    glDepthMask(GL_TRUE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
     pfn_glBindVertexArray(0);
     pfn_glUseProgram(0);
 }

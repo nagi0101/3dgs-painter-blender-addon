@@ -81,10 +81,10 @@ private:
     GLuint m_instanceBuffer = 0;  // Per-instance gaussian data
     
     // Uniform locations
+    GLint m_viewProjMatrixLoc = -1;
     GLint m_viewMatrixLoc = -1;
-    GLint m_projMatrixLoc = -1;
-    GLint m_viewportLoc = -1;
-    GLint m_focalLoc = -1;
+    GLint m_camPosAndFocalXLoc = -1;
+    GLint m_viewportAndFocalYLoc = -1;
 };
 
 /**
@@ -93,4 +93,3 @@ private:
 GaussianRenderer& GetGaussianRenderer();
 
 }  // namespace gaussian
-
