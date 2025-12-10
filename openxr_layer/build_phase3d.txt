@@ -1,8 +1,0 @@
-﻿msbuild 踰꾩쟾 17.14.23+b0019275e(.NET Framework??
-
-  composition_layer.cpp
-  main.cpp
-  xr_dispatch.cpp
-  肄붾뱶瑜??앹꽦?섍퀬 ?덉뒿?덈떎...
-     C:/Users/LEE/Documents/GitHub/3dgs-painter-blender-addon/openxr_layer/build/Release/gaussian_layer.lib ?쇱씠釉뚮윭由?諛?C:/Users/LEE/Documents/GitHub/3dgs-painter-blender-addon/openxr_layer/build/Release/gaussian_layer.exp 媛쒖껜瑜??앹꽦?섍퀬 ?덉뒿?덈떎.
-  gaussian_layer.vcxproj -> C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\Release\gaussian_layer.dll

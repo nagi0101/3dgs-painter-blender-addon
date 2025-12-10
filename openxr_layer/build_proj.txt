@@ -1,7 +1,0 @@
-﻿msbuild 踰꾩쟾 17.14.23+b0019275e(.NET Framework??
-
-  gaussian_renderer.cpp
-C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(425,28): error C2589: '(': '::' ?ㅻⅨ履쎌뿉 ?섎せ???좏겙???덉뒿?덈떎. [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
-C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\src\gaussian_renderer.cpp(425,28): error C2059: 援щЦ ?ㅻ쪟: ')' [C:\Users\LEE\Documents\GitHub\3dgs-painter-blender-addon\openxr_layer\build\gaussian_layer.vcxproj]
-  xr_dispatch.cpp
-  肄붾뱶瑜??앹꽦?섍퀬 ?덉뒿?덈떎...
