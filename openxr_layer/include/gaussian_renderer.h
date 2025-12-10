@@ -49,8 +49,10 @@ public:
      * @param count Number of Gaussians
      * @param viewMatrix 4x4 column-major view matrix
      * @param projMatrix 4x4 column-major projection matrix
-     * @param cameraRotation Blender camera rotation quaternion (w,x,y,z) for coordinate alignment
      * @param cameraPosition Blender camera world position for VR origin offset
+     * @param cameraRotation Blender camera rotation quaternion (w,x,y,z) for coordinate alignment
+     * @param sortedIndices Array of indices for back-to-front rendering order
+     * @param indicesValid True if sortedIndices should be used
      * @param viewportWidth Render target width
      * @param viewportHeight Render target height
      */
@@ -59,8 +61,10 @@ public:
         uint32_t count,
         const float* viewMatrix,
         const float* projMatrix,
-        const float* cameraRotation,
         const float* cameraPosition,
+        const float* cameraRotation,
+        const uint32_t* sortedIndices,
+        bool indicesValid,
         uint32_t viewportWidth,
         uint32_t viewportHeight);
 

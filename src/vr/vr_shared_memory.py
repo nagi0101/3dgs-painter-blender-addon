@@ -5,9 +5,9 @@ This module writes Gaussian data to Windows Named Shared Memory,
 which is read by the OpenXR API Layer DLL to render in VR.
 
 Data format matches gaussian_data.h:
-- SharedMemoryHeader: 148 bytes
-- GaussianPrimitive: 56 bytes each
-- Max: 100,000 gaussians
+- SharedMemoryHeader: 180 bytes
+- Index Array: 400,000 bytes (uint32[100,000])
+- GaussianPrimitive: 56 bytes each × 100,000
 """
 
 import mmap
@@ -25,7 +25,15 @@ MAGIC_NUMBER = 0x33444753  # "3DGS" in little-endian
 # magic(4) + version(4) + frame_id(4) + count(4) + flags(4) + view(64) + proj(64) + camera_rot(16) + camera_pos(12) + padding(4)
 HEADER_SIZE = 4 + 4 + 4 + 4 + 4 + 64 + 64 + 16 + 12 + 4  # 180 bytes
 GAUSSIAN_SIZE = 56  # 12 + 16 + 12 + 16 bytes
-BUFFER_SIZE = HEADER_SIZE + (MAX_GAUSSIANS * GAUSSIAN_SIZE)
+
+# Index array layout
+INDEX_ARRAY_SIZE = MAX_GAUSSIANS * 4  # uint32 array (4 bytes each)
+INDEX_ARRAY_OFFSET = HEADER_SIZE  # Indices start after header
+GAUSSIAN_DATA_OFFSET = HEADER_SIZE + INDEX_ARRAY_SIZE  # Data starts after indices
+BUFFER_SIZE = HEADER_SIZE + INDEX_ARRAY_SIZE + (MAX_GAUSSIANS * GAUSSIAN_SIZE)
+
+# Flag constants
+SHMEM_FLAG_INDICES_VALID = 0x00000001
 
 
 class GaussianPrimitive:
@@ -171,7 +179,8 @@ class SharedMemoryWriter:
                       view_matrix: Optional[np.ndarray],
                       proj_matrix: Optional[np.ndarray],
                       camera_rotation: Optional[Tuple[float, float, float, float]] = None,
-                      camera_position: Optional[Tuple[float, float, float]] = None):
+                      camera_position: Optional[Tuple[float, float, float]] = None,
+                      flags: int = 0):
         """Write header to shared memory."""
         if not self._mmap:
             return
@@ -184,7 +193,7 @@ class SharedMemoryWriter:
             1,  # version
             self._frame_id,
             gaussian_count,
-            0   # flags
+            flags
         )
         
         # View matrix (16 floats = 64 bytes)
@@ -242,7 +251,7 @@ class SharedMemoryWriter:
         
         # Write gaussian data
         if count > 0:
-            self._mmap.seek(HEADER_SIZE)
+            self._mmap.seek(GAUSSIAN_DATA_OFFSET)
             for i, g in enumerate(gaussians[:count]):
                 self._mmap.write(g.pack())
         
@@ -277,61 +286,78 @@ class SharedMemoryWriter:
         
         count = min(len(positions), MAX_GAUSSIANS)
         
-        if count > 0 and view_matrix is not None:
-            # Back-to-front sorting for correct alpha blending
-            try:
-                # Reshape view matrix to 4x4
-                view_mat_4x4 = np.asarray(view_matrix, dtype=np.float32).reshape(4, 4)
-
-                # Homogenize world positions (add w=1)
-                pos_world_h = np.hstack((positions[:count], np.ones((count, 1), dtype=np.float32)))
-
-                # Transform to view space. Blender's matrices are column-major,
-                # so we post-multiply the transpose for a (N, 4) x (4, 4) operation.
-                pos_view_h = pos_world_h @ view_mat_4x4.T
-                
-                # Get view-space depth (Z coordinate)
-                depths = pos_view_h[:, 2]
-
-                # Get sorting indices. In OpenGL's right-handed view space, the camera
-                # looks down the -Z axis, so farther objects have a more negative Z.
-                # Sorting in ascending order gives us the correct back-to-front sequence.
-                sort_indices = np.argsort(depths)
-                
-                # Apply sorting to all attribute arrays
-                sorted_positions = positions[:count][sort_indices]
-                sorted_colors = colors[:count][sort_indices]
-                sorted_scales = scales[:count][sort_indices]
-                sorted_rotations = rotations[:count][sort_indices]
-
-            except Exception as e:
-                print(f"[SharedMemory Sort] Sorting failed: {e}. Using unsorted data.")
-                # Fallback to unsorted data in case of error
-                sorted_positions = positions[:count]
-                sorted_colors = colors[:count]
-                sorted_scales = scales[:count]
-                sorted_rotations = rotations[:count]
-        else:
-            # No sorting if view matrix is not available
-            sorted_positions = positions[:count]
-            sorted_colors = colors[:count]
-            sorted_scales = scales[:count]
-            sorted_rotations = rotations[:count]
-
-        # Write header with camera rotation
-        self._write_header(count, view_matrix, proj_matrix, camera_rotation)
+        # Write header (indices NOT valid - will be set by VR timer)
+        self._write_header(count, view_matrix, proj_matrix, camera_rotation, flags=0)
         
         if count > 0:
-            # Prepare interleaved data with SORTED arrays
+            # Write UNSORTED data - indices will be used by C++ to read in correct order
             # Each gaussian: pos(3) + color(4) + scale(3) + rotation(4) = 14 floats = 56 bytes
             data = np.zeros((count, 14), dtype=np.float32)
-            data[:, 0:3] = sorted_positions
-            data[:, 3:7] = sorted_colors
-            data[:, 7:10] = sorted_scales
-            data[:, 10:14] = sorted_rotations
+            data[:, 0:3] = positions[:count]
+            data[:, 3:7] = colors[:count]
+            data[:, 7:10] = scales[:count]
+            data[:, 10:14] = rotations[:count]
             
-            self._mmap.seek(HEADER_SIZE)
+            self._mmap.seek(GAUSSIAN_DATA_OFFSET)
             self._mmap.write(data.tobytes())
+        
+        return True
+    
+    def write_sorted_indices(self,
+                             positions: np.ndarray,
+                             view_matrix: np.ndarray,
+                             gaussian_count: int) -> bool:
+        """
+        Compute back-to-front sorted indices and write to shared memory.
+        Called by VR timer every frame to update sort order based on headset position.
+        
+        Args:
+            positions: Nx3 float32 array (world positions)
+            view_matrix: 16-element float array (column-major, from VR headset)
+            gaussian_count: Number of valid gaussians
+            
+        Returns:
+            True on success
+        """
+        if not self._mmap:
+            return False
+        
+        count = min(gaussian_count, MAX_GAUSSIANS)
+        if count == 0:
+            return True
+        
+        try:
+            # Reshape view matrix to 4x4
+            # Note: view_matrix is stored column-major (transposed for OpenGL)
+            # For row-vector multiplication pos @ M, we need to use it directly
+            view_mat_4x4 = np.asarray(view_matrix, dtype=np.float32).reshape(4, 4)
+            
+            # Homogenize world positions (add w=1)
+            pos_world_h = np.hstack((positions[:count], np.ones((count, 1), dtype=np.float32)))
+            
+            # Transform to view space
+            # Since view_matrix is column-major (transposed), use it directly for row-vector mult
+            pos_view_h = pos_world_h @ view_mat_4x4
+            
+            # Get view-space depth (Z coordinate)
+            # In Blender/OpenGL view space, -Z is forward, so more negative = farther
+            depths = pos_view_h[:, 2]
+            
+            # Sort back-to-front (ascending Z = back to front for right-handed -Z forward)
+            sort_indices = np.argsort(depths).astype(np.uint32)
+            
+        except Exception as e:
+            print(f"[VR SHM] Sorting failed: {e}. Using identity indices.")
+            sort_indices = np.arange(count, dtype=np.uint32)
+        
+        # Write sorted indices
+        self._mmap.seek(INDEX_ARRAY_OFFSET)
+        self._mmap.write(sort_indices.tobytes())
+        
+        # Update flags to indicate indices are valid
+        # Read current header, update flags, write back
+        self._mmap.seek(16)  # Offset to flags field (magic + version + frame_id + count)
+        self._mmap.write(struct.pack('<I', SHMEM_FLAG_INDICES_VALID))
         
         return True
 

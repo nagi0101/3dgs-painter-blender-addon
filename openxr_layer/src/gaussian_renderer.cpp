@@ -486,6 +486,8 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
     const float* projMatrix,
     const float* cameraPosition,
     const float* cameraRotation,
+    const uint32_t* sortedIndices,
+    bool indicesValid,
     uint32_t viewportWidth,
     uint32_t viewportHeight)
 {
@@ -500,8 +502,14 @@ void GaussianRenderer::RenderFromPrimitivesWithMatrices(
     std::vector<float> instanceData(count * floatsPerInstance);
     
     for (uint32_t i = 0; i < count; i++) {
+        // Use sorted index if available, otherwise use linear index
+        uint32_t dataIndex = (indicesValid && sortedIndices) ? sortedIndices[i] : i;
+        if (dataIndex >= count) {
+            dataIndex = i;  // Fallback to linear if invalid
+        }
+        
         int base = i * floatsPerInstance;
-        const auto& g = gaussians[i];
+        const auto& g = gaussians[dataIndex];
         
         instanceData[base + 0] = g.position[0];
         instanceData[base + 1] = g.position[1];

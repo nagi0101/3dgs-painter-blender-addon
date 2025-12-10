@@ -199,3 +199,21 @@ class SceneData:
 
     def __repr__(self):
         return f"SceneData(gaussians={self.count})"
+
+
+# ============================================
+# Global Active SceneData Accessor
+# ============================================
+_active_scene_data: Optional[SceneData] = None
+
+
+def get_active_scene_data() -> Optional[SceneData]:
+    """Get the currently active SceneData instance (used by VR timer)."""
+    return _active_scene_data
+
+
+def set_active_scene_data(scene_data: Optional[SceneData]) -> None:
+    """Set the active SceneData instance (called when painting starts)."""
+    global _active_scene_data
+    _active_scene_data = scene_data
+

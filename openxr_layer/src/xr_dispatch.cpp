@@ -255,12 +255,16 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
                         const float* cameraRotation = buffer->header.camera_rotation;
                         const float* cameraPosition = buffer->header.camera_position;
                         
+                        // Get sorted indices and check validity
+                        const uint32_t* sortedIndices = buffer->indices;
+                        bool indicesValid = (buffer->header.flags & SHMEM_FLAG_INDICES_VALID) != 0;
+                        
                         if (viewMatrix && projMatrix) {
                             // DEBUG: Log that we're about to render
                             static int renderCallCounter = 0;
                             if (renderCallCounter++ % 120 == 0) {
-                                LogXr("CALLING RENDER: count=%d, eye=%d, pos[0]=(%.2f,%.2f,%.2f)",
-                                    buffer->header.gaussian_count, eye,
+                                LogXr("CALLING RENDER: count=%d, eye=%d, indicesValid=%d, pos[0]=(%.2f,%.2f,%.2f)",
+                                    buffer->header.gaussian_count, eye, indicesValid ? 1 : 0,
                                     buffer->gaussians[0].position[0],
                                     buffer->gaussians[0].position[1],
                                     buffer->gaussians[0].position[2]);
@@ -278,8 +282,10 @@ XrResult XRAPI_CALL gaussian_xrEndFrame(
                                 buffer->header.gaussian_count,
                                 viewMatrix,
                                 projMatrix,
-                                cameraRotation,
                                 cameraPosition,
+                                cameraRotation,
+                                sortedIndices,
+                                indicesValid,
                                 1024, 1024  // viewport size
                             );
                         }

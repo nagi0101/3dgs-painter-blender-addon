@@ -20,6 +20,7 @@ def _vr_matrix_update_callback():
     """
     Timer callback that continuously updates view matrix to shared memory.
     This ensures Gaussians stay world-fixed when viewport moves.
+    Also updates depth-sorted indices for correct alpha blending.
     """
     global _vr_matrix_updater_running
     
@@ -33,6 +34,7 @@ def _vr_matrix_update_callback():
     
     try:
         from .vr_shared_memory import get_shared_memory_writer
+        from ..npr_core.scene_data import get_active_scene_data
         
         wm = bpy.context.window_manager
         if not hasattr(wm, 'xr_session_state') or wm.xr_session_state is None:
@@ -66,8 +68,13 @@ def _vr_matrix_update_callback():
         # Update shared memory with current matrices
         writer = get_shared_memory_writer()
         if writer.is_open():
-            # Only update matrices, not Gaussian data
+            # Update view/projection matrices
             writer.update_matrices(view_matrix, None, camera_rotation, camera_position)
+            
+            # Update sorted indices based on VR headset position
+            scene_data = get_active_scene_data()
+            if scene_data is not None and scene_data.count > 0:
+                writer.write_sorted_indices(scene_data.positions, view_matrix, scene_data.count)
         
     except Exception as e:
         print(f"[VR Matrix] Update error: {e}")

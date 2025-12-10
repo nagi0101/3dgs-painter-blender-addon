@@ -540,6 +540,10 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
                     'camera_rotation': camera_rotation
                 })
                 
+                # Set active scene_data for VR timer to access positions
+                from ..npr_core.scene_data import set_active_scene_data
+                set_active_scene_data(scene_data)
+                
         except Exception as e:
             print(f"[VR Paint] OpenXR Layer sync error: {e}")
     
