@@ -559,8 +559,10 @@ void main() {
             # Gaussian count
             self.shader.uniform_int("gaussianCount", (tex_info["gaussian_count"],))
             
+            # Sort gaussians based on current view and get the updated texture
+            texture = self.data_manager.sort_and_update_texture(view_matrix)
+            
             # Bind gaussian data texture
-            texture = self.data_manager.get_texture()
             if texture is not None:
                 self.shader.uniform_sampler("gaussianData", texture)
             

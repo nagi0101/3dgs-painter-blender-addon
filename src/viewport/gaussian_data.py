@@ -330,11 +330,63 @@ class GaussianDataManager:
             "gaussian_count": self.gaussian_count,
             "floats_per_gaussian": FLOATS_PER_GAUSSIAN,
         }
+
+    def sort_and_update_texture(self, view_matrix: "Matrix"):
+        """
+        Sorts gaussians back-to-front based on the view matrix and updates the GPU texture.
+
+        Args:
+            view_matrix: 4x4 view matrix from the current viewport.
+
+        Returns:
+            The updated GPU texture object.
+        """
+        if self.data_buffer is None or self.gaussian_count == 0:
+            return self.texture
+
+        try:
+            # Extract positions for sorting
+            positions = self.data_buffer[:, 0:3]
+            count = self.gaussian_count
+
+            # Homogenize world positions (add w=1)
+            pos_world_h = np.hstack((positions, np.ones((count, 1), dtype=np.float32)))
+
+            # Transform to view space.
+            # Blender's Matrix is column-major in memory layout.
+            # When converted to numpy, it becomes a transposed representation of
+            # what one might expect from a row-major perspective.
+            # The operation `pos @ view_matrix.T` is correct here.
+            pos_view_h = pos_world_h @ view_matrix.transposed()
+
+            # Get view-space depth (Z coordinate)
+            depths = pos_view_h[:, 2]
+
+            # Get sorting indices. In OpenGL's right-handed view space, the camera
+            # looks down the -Z axis, so farther objects have a more negative Z.
+            # Sorting in ascending order gives the correct back-to-front sequence.
+            sort_indices = np.argsort(depths)
+
+            # Apply sorting to the entire data buffer
+            sorted_data = self.data_buffer[sort_indices]
+            
+            # Re-upload the now-sorted data to the texture
+            self._upload_to_texture(sorted_data)
+
+        except Exception as e:
+            print(f"[GaussianDataManager Sort] Sorting failed: {e}")
+            # If sorting fails, we might still try to upload the unsorted data
+            # to avoid a complete crash, though visuals will be incorrect.
+            self._upload_to_texture(self.data_buffer)
+
+        return self.texture
     
     @property
     def is_valid(self) -> bool:
         """Check if data manager has valid data."""
         return self.texture is not None and self.gaussian_count > 0
+
+
 
 
 # Utility functions for standalone testing

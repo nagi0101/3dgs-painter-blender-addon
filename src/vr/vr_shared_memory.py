@@ -258,14 +258,15 @@ class SharedMemoryWriter:
                               camera_rotation: Optional[Tuple[float, float, float, float]] = None) -> bool:
         """
         Write Gaussian data from numpy arrays (faster for large datasets).
+        This includes back-to-front sorting for correct alpha blending.
         
         Args:
             positions: Nx3 float32 array
             colors: Nx4 float32 array (RGBA)
             scales: Nx3 float32 array
             rotations: Nx4 float32 array (quaternion wxyz)
-            view_matrix: Optional 16-element float array
-            proj_matrix: Optional 16-element float array
+            view_matrix: Optional 16-element float array (column-major)
+            proj_matrix: Optional 16-element float array (column-major)
             camera_rotation: Optional camera rotation quaternion (w,x,y,z)
         
         Returns:
@@ -276,17 +277,58 @@ class SharedMemoryWriter:
         
         count = min(len(positions), MAX_GAUSSIANS)
         
+        if count > 0 and view_matrix is not None:
+            # Back-to-front sorting for correct alpha blending
+            try:
+                # Reshape view matrix to 4x4
+                view_mat_4x4 = np.asarray(view_matrix, dtype=np.float32).reshape(4, 4)
+
+                # Homogenize world positions (add w=1)
+                pos_world_h = np.hstack((positions[:count], np.ones((count, 1), dtype=np.float32)))
+
+                # Transform to view space. Blender's matrices are column-major,
+                # so we post-multiply the transpose for a (N, 4) x (4, 4) operation.
+                pos_view_h = pos_world_h @ view_mat_4x4.T
+                
+                # Get view-space depth (Z coordinate)
+                depths = pos_view_h[:, 2]
+
+                # Get sorting indices. In OpenGL's right-handed view space, the camera
+                # looks down the -Z axis, so farther objects have a more negative Z.
+                # Sorting in ascending order gives us the correct back-to-front sequence.
+                sort_indices = np.argsort(depths)
+                
+                # Apply sorting to all attribute arrays
+                sorted_positions = positions[:count][sort_indices]
+                sorted_colors = colors[:count][sort_indices]
+                sorted_scales = scales[:count][sort_indices]
+                sorted_rotations = rotations[:count][sort_indices]
+
+            except Exception as e:
+                print(f"[SharedMemory Sort] Sorting failed: {e}. Using unsorted data.")
+                # Fallback to unsorted data in case of error
+                sorted_positions = positions[:count]
+                sorted_colors = colors[:count]
+                sorted_scales = scales[:count]
+                sorted_rotations = rotations[:count]
+        else:
+            # No sorting if view matrix is not available
+            sorted_positions = positions[:count]
+            sorted_colors = colors[:count]
+            sorted_scales = scales[:count]
+            sorted_rotations = rotations[:count]
+
         # Write header with camera rotation
         self._write_header(count, view_matrix, proj_matrix, camera_rotation)
         
         if count > 0:
-            # Prepare interleaved data
+            # Prepare interleaved data with SORTED arrays
             # Each gaussian: pos(3) + color(4) + scale(3) + rotation(4) = 14 floats = 56 bytes
             data = np.zeros((count, 14), dtype=np.float32)
-            data[:, 0:3] = positions[:count]
-            data[:, 3:7] = colors[:count]
-            data[:, 7:10] = scales[:count]
-            data[:, 10:14] = rotations[:count]
+            data[:, 0:3] = sorted_positions
+            data[:, 3:7] = sorted_colors
+            data[:, 7:10] = sorted_scales
+            data[:, 10:14] = sorted_rotations
             
             self._mmap.seek(HEADER_SIZE)
             self._mmap.write(data.tobytes())
