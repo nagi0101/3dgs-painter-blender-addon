@@ -336,15 +336,6 @@ class THREEGDS_OT_VRFreehandPaint(Operator):
         
         tip_pos, tip_rot = result
         
-        # DEBUG: Log positions every 30 ticks (~300ms)
-        if self._debug_tick_counter % 30 == 1:
-            wm = context.window_manager
-            if hasattr(wm, 'xr_session_state') and wm.xr_session_state:
-                xr = wm.xr_session_state
-                head_pos = xr.viewer_pose_location
-                print(f"[VR DEBUG] Controller: ({tip_pos.x:.2f}, {tip_pos.y:.2f}, {tip_pos.z:.2f})")
-                print(f"[VR DEBUG] Headset:    ({head_pos.x:.2f}, {head_pos.y:.2f}, {head_pos.z:.2f})")
-        
         # NOTE: Matrix updates are now handled by continuous updater in vr_operators.py
         # Removed self._update_vr_matrices(context) to prevent conflicting updates
         
