@@ -6,6 +6,7 @@ A Blender addon for non-photorealistic 3D Gaussian Splatting painting, based on 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+## 📺 Preview
 [![Video Title](https://img.youtube.com/vi/HOXsWTQbFzI/0.jpg)](https://youtu.be/HOXsWTQbFzI)
 
 ## Features
